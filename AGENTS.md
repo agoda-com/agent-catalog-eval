@@ -4,7 +4,7 @@ Guide for AI coding agents working in this repo. Read this before making changes
 
 ## What this repo is
 
-`agent-catalog-eval` is a public CLI (`agent-catalog-eval` on npm) that
+`agoda-agent-catalog-eval` is a public CLI (`agoda-agent-catalog-eval` on npm) that
 evaluates coding-agent **skills** against a catalog of test cases. Users point
 it at a directory of cases and it runs an agent (Cursor / OpenCode / Claude
 Code) on each one, then scores the result with an LLM judge.
