@@ -100,23 +100,6 @@ We're pretty smart about figuring out where we're running. CI context (project /
 
 Want to be the boss? Override any field with `--project` (more overrides coming soon!).
 
-## Custom Headers: BYOH (Bring Your Own Headers) 🎩
-
-We ship with exactly **zero** default HTTP headers. If your gateway or metrics service needs to know who's knocking, you'll have to tell them yourself:
-
-```bash
-agent-catalog-eval ./cases \
-  --header x-genai-component=my-team \
-  --collect \
-  --metrics-url https://my-metrics/api/v1/evals \
-  --header x-team=backend
-```
-
-These headers get VIP access to:
-1. The OpenAI judge / diagnosis calls (as `defaultHeaders` on the OpenAI client).
-2. The OpenCode provider config (so the agent politely forwards them on its OpenAI calls).
-3. The telemetry POST.
-
 ## Exit Codes: Did We Pass? 🚦
 
 | Code | What it means |
@@ -126,41 +109,7 @@ These headers get VIP access to:
 
 ## Telemetry Payload: The Report Card 📊
 
-If you pass the `--collect` flag, we'll POST a lovely `application/json` summary to your `--metrics-url`. It looks a little something like this:
-
-```json
-{
-  "project": "team/repo",
-  "pipeline_id": "123",
-  "commit_sha": "abc",
-  "branch": "main",
-  "triggered_at": "2026-04-04T12:00:00.000Z",
-  "agent": "opencode",
-  "worker_model": "claude-opus-4-7",
-  "judge_model": "gpt-4o-mini",
-  "summary": {
-    "total": 5,
-    "passed": 4,
-    "failed": 1,
-    "pass_rate": 0.8,
-    "avg_score": 82.4,
-    "total_duration_ms": 210000
-  },
-  "results": [
-    {
-      "test_name": "csharp/agoda-ioc-dependency-injection/refactor-manual-di",
-      "passed": true,
-      "score": 85,
-      "threshold": 70,
-      "duration_ms": 42000,
-      "reasoning": "Agent correctly applied IoC attributes...",
-      "error": null
-    }
-  ]
-}
-```
-
-Don't worry, if your metrics server throws a tantrum (non-2xx response), we'll just log a warning and keep on trucking. We won't fail your run over it! 🚚
+If you pass the `--collect` flag, we'll POST a lovely `application/json` summary to your `--metrics-url`. 
 
 ## Example Consumer: See It In Action 🎬
 
@@ -171,23 +120,6 @@ npx agoda-agent-catalog-eval tests/e2e \
   --agent opencode \
   --collect \
   --header x-custom-auth=my-token
-```
-
-## Development: For the Tinkerers 🛠️
-
-Want to look under the hood? Here's how to get your hands dirty:
-
-```bash
-pnpm install
-pnpm build         # tsup → dist/cli.cjs + dist/index.{js,cjs,d.ts}
-pnpm test          # vitest (because testing the tester is important!)
-pnpm check-types   # tsc --noEmit
-```
-
-We use [Changesets](https://github.com/changesets/changesets) to manage releases. Made a cool change? Tell us about it:
-
-```bash
-pnpm versioning
 ```
 
 When your brilliant code gets merged to `main`, our `changeset.yml` workflow will automatically open/merge a release PR and publish it to npm with `access: public` and provenance enabled. Magic! ✨

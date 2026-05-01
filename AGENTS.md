@@ -4,7 +4,7 @@ Guide for AI coding agents working in this repo. Read this before making changes
 
 ## What this repo is
 
-`agent-catalog-eval` is a public CLI (`agoda-agent-catalog-eval` on npm) that
+`agent-catalog-eval` is a public CLI (`agent-catalog-eval` on npm) that
 evaluates coding-agent **skills** against a catalog of test cases. Users point
 it at a directory of cases and it runs an agent (Cursor / OpenCode / Claude
 Code) on each one, then scores the result with an LLM judge.
@@ -73,8 +73,7 @@ can skip `build` and `test`, but lint + types must still pass.
 
 ### 2. NO BREAKING CHANGES
 
-This package is consumed by `skills-mcp` and (in time) other repos. Treat the
-following as a hard constraint:
+Treat the following as a hard constraint:
 
 - **Do not rename or remove** any CLI flag, positional argument, env var, or
   exit code listed in the README.
@@ -97,24 +96,14 @@ If a change feels unavoidable:
 Additive changes (new flag with a sensible default, new exported helper, new
 optional field on payload) are fine and should be marked `minor`.
 
-### 3. Add a changeset for every user-visible change
-
-```bash
-pnpm versioning
-```
-
-Pick `patch` for bugfixes, `minor` for additive features, `major` only with
-explicit approval (see rule 2). Skip the changeset only for pure
-internal/test/docs changes.
-
-### 4. Test what's in this repo, not what's downstream
+### 3. Test what's in this repo, not what's downstream
 
 Per the project rule: don't write tests for the openai SDK, the yaml parser,
 or the spawned agent binaries — they have their own tests. Cover our own
 logic (parsing, payload shape, file walking, CI detection, runner control
 flow). Mock at seams (`OpenAI` client, `child_process.spawn`).
 
-### 5. Style and dependencies
+### 4. Style and dependencies
 
 - Prettier handles formatting — `pnpm format` before opening a PR.
 - ESLint flat config (`eslint.config.js`) is the source of truth for lint
@@ -132,9 +121,3 @@ flow). Mock at seams (`OpenAI` client, `child_process.spawn`).
   merged, runs `pnpm changeset publish` to npm with provenance.
 - The first changeset (`.changeset/initial-release.md`) ships `0.1.0`.
 - Don't manually bump versions in `package.json` — Changesets owns that.
-
-## When in doubt
-
-- Check the issue tracker for context.
-- Re-read this file. If you'd like to update a rule, do it in the same PR
-  as the change that motivated it and explain why in the PR description.
