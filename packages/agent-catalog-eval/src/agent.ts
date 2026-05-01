@@ -8,6 +8,8 @@ export interface AgentRunConfig {
   prompt: string;
   skillContent: string;
   skillName: string;
+  /** Extra skills to install alongside the primary one. */
+  additionalSkills?: Array<{ name: string; content: string }>;
   agent: AgentType;
   model: string;
   apiKey: string;
@@ -149,9 +151,24 @@ async function runClaudeCode(
  * used in real projects. The agent must discover and apply it naturally.
  */
 export async function runAgent(config: AgentRunConfig): Promise<AgentResult> {
-  const { workDir, prompt, skillContent, skillName, agent, model, apiKey, baseUrl, headers, timeoutMs } = config;
+  const {
+    workDir,
+    prompt,
+    skillContent,
+    skillName,
+    additionalSkills = [],
+    agent,
+    model,
+    apiKey,
+    baseUrl,
+    headers,
+    timeoutMs,
+  } = config;
 
   await placeSkill(workDir, skillName, skillContent);
+  for (const s of additionalSkills) {
+    await placeSkill(workDir, s.name, s.content);
+  }
 
   switch (agent) {
     case "cursor":

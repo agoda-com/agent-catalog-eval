@@ -205,4 +205,40 @@ describe("parseCliArgs", () => {
       expect(result.config.filter).toBe("ioc");
     }
   });
+
+  it("--category and --not-category are forwarded to the runner config", () => {
+    const result = parseCliArgs(
+      ["--category", "office", "--not-category", "prompts,drafts"],
+      env(),
+    );
+    expect(result.kind).toBe("config");
+    if (result.kind === "config") {
+      expect(result.config.category).toBe("office");
+      expect(result.config.notCategory).toBe("prompts,drafts");
+    }
+  });
+
+  it("--list-categories returns a list-categories result with cases-dir resolved", () => {
+    const result = parseCliArgs(["./skills", "--list-categories"], env());
+    expect(result.kind).toBe("list-categories");
+    if (result.kind === "list-categories") {
+      expect(result.casesDir).toBe("/work/skills");
+    }
+  });
+
+  it("--list-categories does not require OPENAI_API_KEY", () => {
+    const result = parseCliArgs(["--list-categories"], { cwd: "/work", env: {} });
+    expect(result.kind).toBe("list-categories");
+  });
+
+  it("--list-categories honours --repo-root", () => {
+    const result = parseCliArgs(
+      ["./skills", "--list-categories", "--repo-root", "../monorepo"],
+      env(),
+    );
+    expect(result.kind).toBe("list-categories");
+    if (result.kind === "list-categories") {
+      expect(result.repoRoot).toBe("/monorepo");
+    }
+  });
 });

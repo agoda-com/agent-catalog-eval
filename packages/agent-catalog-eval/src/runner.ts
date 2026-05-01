@@ -37,11 +37,15 @@ export async function discoverTests(
         name: relative(casesDir, dir),
         dir,
         skillPath: resolve(repoRoot, config.skill_path),
+        additionalSkillPaths: (config.additional_skills ?? []).map((p) =>
+          resolve(repoRoot, p),
+        ),
         threshold: config.threshold,
         judgeRubric: config.judge_rubric,
         prompt,
         beforeDir: join(dir, "before"),
         afterDir: join(dir, "after"),
+        category: config.category,
       });
       return;
     }
@@ -55,6 +59,15 @@ export async function discoverTests(
 
   await walk(casesDir);
   return tests.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Returns the set of distinct, non-empty categories across the given tests, sorted. */
+export function getCategories(tests: TestCase[]): string[] {
+  const categories = new Set<string>();
+  for (const t of tests) {
+    if (t.category) categories.add(t.category);
+  }
+  return [...categories].sort();
 }
 
 async function saveTrace(traceDir: string, agentResult: AgentResult) {
@@ -99,11 +112,19 @@ async function executeTest(
     const skillContent = await readFile(testCase.skillPath, "utf-8");
     const skillName = basename(dirname(testCase.skillPath));
 
+    const additionalSkills = await Promise.all(
+      testCase.additionalSkillPaths.map(async (p) => ({
+        name: basename(dirname(p)),
+        content: await readFile(p, "utf-8"),
+      })),
+    );
+
     const agentResult = await runAgent({
       workDir,
       prompt: testCase.prompt,
       skillContent,
       skillName,
+      additionalSkills,
       agent: config.agent,
       model: config.workerModel,
       apiKey: config.apiKey,
@@ -127,20 +148,24 @@ async function executeTest(
       );
     }
 
-    if (!checkSkillUsage(agentResult, skillName)) {
-      console.log(
-        chalk.yellow(
-          `  ⚠ Skill "${skillName}" was not referenced in agent output — ` +
-            `the prompt may not trigger skill discovery, or the skill needs a better title/description`,
-        ),
-      );
+    for (const s of [{ name: skillName }, ...additionalSkills]) {
+      if (!checkSkillUsage(agentResult, s.name)) {
+        console.log(
+          chalk.yellow(
+            `  ⚠ Skill "${s.name}" was not referenced in agent output — ` +
+              `the prompt may not trigger skill discovery, or the skill needs a better title/description`,
+          ),
+        );
+      }
     }
 
     const agentFiles = (await collectFiles(workDir)).filter(
       (f) =>
         !f.path.startsWith(".cursor") &&
+        !f.path.startsWith(".claude") &&
         !f.path.startsWith(".opencode") &&
-        !f.path.startsWith(TRACE_DIR),
+        !f.path.startsWith(TRACE_DIR) &&
+        f.path !== "opencode.json",
     );
     const desiredFiles = await collectFiles(testCase.afterDir);
 
@@ -164,6 +189,7 @@ async function executeTest(
       threshold: testCase.threshold,
       reasoning: verdict.reasoning,
       durationMs: Date.now() - start,
+      category: testCase.category,
     };
   } catch (err) {
     return {
@@ -174,6 +200,7 @@ async function executeTest(
       reasoning: "",
       durationMs: Date.now() - start,
       error: err instanceof Error ? err.message : String(err),
+      category: testCase.category,
     };
   }
 }
@@ -216,9 +243,19 @@ export function printSummary(results: TestResult[]) {
 
 export async function runAll(config: RunnerConfig): Promise<TestResult[]> {
   const allTests = await discoverTests(config.casesDir, config.repoRoot);
-  const tests = config.filter
+
+  let tests = config.filter
     ? allTests.filter((t) => t.name.includes(config.filter!))
     : allTests;
+
+  if (config.category) {
+    tests = tests.filter((t) => t.category === config.category);
+  }
+
+  if (config.notCategory) {
+    const exclude = new Set(config.notCategory.split(",").map((c) => c.trim()));
+    tests = tests.filter((t) => !t.category || !exclude.has(t.category));
+  }
 
   if (tests.length === 0) {
     console.log(chalk.yellow("No test cases found."));
@@ -227,9 +264,17 @@ export async function runAll(config: RunnerConfig): Promise<TestResult[]> {
 
   console.log(chalk.bold(`\nDiscovered ${tests.length} test case(s):\n`));
   for (const t of tests) {
-    console.log(`  ${chalk.cyan("•")} ${t.name} (threshold: ${t.threshold}%)`);
+    const categoryLabel = t.category ? chalk.dim(` [${t.category}]`) : "";
+    console.log(
+      `  ${chalk.cyan("•")} ${t.name}${categoryLabel} (threshold: ${t.threshold}%)`,
+    );
   }
   console.log();
+
+  const allCategories = getCategories(allTests);
+  if (allCategories.length > 0) {
+    console.log(chalk.dim(`Categories: ${allCategories.join(", ")}\n`));
+  }
 
   if (config.dryRun) {
     console.log(chalk.yellow("Dry run — skipping agent execution.\n"));

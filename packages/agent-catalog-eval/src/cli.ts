@@ -1,5 +1,5 @@
 import { parseCliArgs } from "./cli-parser.js";
-import { runAll } from "./runner.js";
+import { discoverTests, getCategories, runAll } from "./runner.js";
 import { reportMetrics } from "./telemetry.js";
 
 async function main(): Promise<number> {
@@ -16,6 +16,27 @@ async function main(): Promise<number> {
   if (result.kind === "error") {
     console.error(`Error: ${result.message}`);
     return 1;
+  }
+
+  if (result.kind === "list-categories") {
+    const tests = await discoverTests(result.casesDir, result.repoRoot);
+    const categories = getCategories(tests);
+
+    console.log("\nAvailable categories:\n");
+    for (const cat of categories) {
+      const count = tests.filter((t) => t.category === cat).length;
+      console.log(`  ${cat} (${count} tests)`);
+    }
+
+    const uncategorized = tests.filter((t) => !t.category);
+    if (uncategorized.length > 0) {
+      console.log(`\n  [uncategorized] (${uncategorized.length} tests)`);
+      for (const t of uncategorized) {
+        console.log(`    - ${t.name}`);
+      }
+    }
+    console.log();
+    return 0;
   }
 
   const { config } = result;
