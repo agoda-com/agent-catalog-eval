@@ -114,6 +114,19 @@ flow). Mock at seams (`OpenAI` client, `child_process.spawn`).
 - Keep `chalk` and `yaml` as `noExternal` in `tsup.config.ts` — both are
   ESM-only and bundling is what makes the cjs bin actually run.
 
+### 5. Don't leak internal information
+
+This repo and the `agoda-agent-catalog-eval` npm package are public. Code,
+docs, commit messages, PR descriptions, and changesets are world-readable.
+
+Keep them free of internal-only hostnames, project / service / team names,
+tracker references, secrets, and anything else you wouldn't put on a public
+status page. Refer to motivating use cases generically.
+
+OK to mention: public npm package names, public `agoda-com/*` GitHub URLs,
+generic technical concepts. Before opening or updating a PR, scan the diff
+and the PR description for internal references and scrub any you find.
+
 ## Release flow
 
 - Push to `main` → `.github/workflows/changeset.yml` either opens a "Version

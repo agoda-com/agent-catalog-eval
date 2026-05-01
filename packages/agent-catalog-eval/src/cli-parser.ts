@@ -31,6 +31,9 @@ Options:
                                (default: opencode)
   --dry-run                  Validate test discovery without running agents
   --filter <pattern>         Only run tests whose name contains <pattern>
+  --category <name>          Only run tests whose eval.yaml has this category
+  --not-category <names>     Exclude tests in these categories (comma-separated)
+  --list-categories          Print categories found under [cases-dir] and exit
   --worker-model <name>      Model for the coding agent (default: ${DEFAULT_WORKER_MODEL})
   --judge-model <name>       Model for the LLM judge (default: ${DEFAULT_JUDGE_MODEL})
   --timeout <seconds>        Per-agent execution timeout (default: ${DEFAULT_TIMEOUT_SEC})
@@ -58,6 +61,8 @@ Examples:
   agent-catalog-eval                                # cases under cwd
   agent-catalog-eval tests/e2e                      # cases under ./tests/e2e
   agent-catalog-eval ./skills --filter ioc          # filter by name
+  agent-catalog-eval ./skills --category office     # only "office" cases
+  agent-catalog-eval ./skills --list-categories     # show categories and exit
   agent-catalog-eval ./skills \\
     --collect \\
     --metrics-url https://my-metrics/api/v1/evals \\
@@ -79,7 +84,21 @@ export interface ErrorResult {
   message: string;
 }
 
-export type CliParseResult = ParseResult | HelpResult | ErrorResult;
+/**
+ * Returned for `--list-categories`. The CLI entry point handles this by
+ * discovering tests under `casesDir` and printing the categories found.
+ */
+export interface ListCategoriesResult {
+  kind: "list-categories";
+  casesDir: string;
+  repoRoot: string;
+}
+
+export type CliParseResult =
+  | ParseResult
+  | HelpResult
+  | ErrorResult
+  | ListCategoriesResult;
 
 export interface ParseEnv {
   cwd: string;
@@ -111,6 +130,9 @@ export function parseCliArgs(argv: string[], envCtx: ParseEnv): CliParseResult {
     help: raw.help as boolean,
     dryRun: raw["dry-run"] as boolean,
     filter: raw.filter as string | undefined,
+    category: raw.category as string | undefined,
+    notCategory: raw["not-category"] as string | undefined,
+    listCategories: raw["list-categories"] as boolean,
     agent: raw.agent as string,
     workerModel: raw["worker-model"] as string,
     judgeModel: raw["judge-model"] as string,
@@ -131,6 +153,12 @@ export function parseCliArgs(argv: string[], envCtx: ParseEnv): CliParseResult {
       kind: "error",
       message: `Unexpected positional arguments: ${positionals.slice(1).join(", ")}`,
     };
+  }
+
+  if (v.listCategories) {
+    const casesDir = resolve(envCtx.cwd, positionals[0] ?? envCtx.cwd);
+    const repoRoot = v.repoRoot ? resolve(envCtx.cwd, v.repoRoot) : findRepoRoot(casesDir);
+    return { kind: "list-categories", casesDir, repoRoot };
   }
 
   if (!VALID_AGENTS.has(v.agent as AgentType)) {
@@ -185,6 +213,8 @@ export function parseCliArgs(argv: string[], envCtx: ParseEnv): CliParseResult {
     baseUrl: envCtx.env.OPENAI_BASE_URL ?? v.baseUrl ?? DEFAULT_BASE_URL,
     dryRun: v.dryRun,
     filter: v.filter,
+    category: v.category,
+    notCategory: v.notCategory,
     timeoutMs: timeoutSec * 1000,
     collectMetrics: v.collect,
     metricsUrl: v.metricsUrl ?? envCtx.env.METRICS_URL ?? DEFAULT_METRICS_URL,
@@ -215,6 +245,9 @@ function parseHeaders(raw: string[]): Record<string, string> {
 const OPTIONS = {
   "dry-run": { type: "boolean", default: false },
   filter: { type: "string" },
+  category: { type: "string" },
+  "not-category": { type: "string" },
+  "list-categories": { type: "boolean", default: false },
   agent: { type: "string", default: DEFAULT_AGENT },
   "worker-model": { type: "string", default: DEFAULT_WORKER_MODEL },
   "judge-model": { type: "string", default: DEFAULT_JUDGE_MODEL },

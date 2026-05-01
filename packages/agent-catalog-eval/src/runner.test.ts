@@ -5,9 +5,12 @@ import { join } from "node:path";
 import {
   checkSkillUsage,
   discoverTests,
+  getCategories,
   printResult,
   printSummary,
+  runAll,
 } from "./runner.js";
+import type { RunnerConfig, TestCase } from "./types.js";
 
 let tmp: string;
 
@@ -21,14 +24,31 @@ afterEach(async () => {
 
 async function writeCase(
   rel: string,
-  opts: { skillPath: string; threshold: number; rubric: string; prompt: string },
+  opts: {
+    skillPath: string;
+    threshold: number;
+    rubric: string;
+    prompt: string;
+    category?: string;
+    additionalSkills?: string[];
+  },
 ) {
   const dir = join(tmp, rel);
   await mkdir(dir, { recursive: true });
-  await writeFile(
-    join(dir, "eval.yaml"),
-    `skill_path: ${opts.skillPath}\nthreshold: ${opts.threshold}\njudge_rubric: |\n  ${opts.rubric}\n`,
-  );
+
+  const lines: string[] = [
+    `skill_path: ${opts.skillPath}`,
+    `threshold: ${opts.threshold}`,
+    `judge_rubric: |`,
+    `  ${opts.rubric}`,
+  ];
+  if (opts.category) lines.push(`category: ${opts.category}`);
+  if (opts.additionalSkills && opts.additionalSkills.length > 0) {
+    lines.push("additional_skills:");
+    for (const p of opts.additionalSkills) lines.push(`  - ${p}`);
+  }
+
+  await writeFile(join(dir, "eval.yaml"), lines.join("\n") + "\n");
   await writeFile(join(dir, "prompt.md"), opts.prompt);
 }
 
@@ -59,6 +79,47 @@ describe("discoverTests", () => {
     expect(t.prompt).toBe("do thing 1");
     expect(t.beforeDir).toBe(join(tmp, "a/case-1", "before"));
     expect(t.afterDir).toBe(join(tmp, "a/case-1", "after"));
+    expect(t.category).toBeUndefined();
+    expect(t.additionalSkillPaths).toEqual([]);
+  });
+
+  it("parses optional `category` from eval.yaml onto the test case", async () => {
+    await writeCase("office/case", {
+      skillPath: "skills/foo/SKILL.md",
+      threshold: 70,
+      rubric: "r",
+      prompt: "p",
+      category: "office",
+    });
+    await writeCase("plain/case", {
+      skillPath: "skills/foo/SKILL.md",
+      threshold: 70,
+      rubric: "r",
+      prompt: "p",
+    });
+
+    const tests = await discoverTests(tmp, "/repo");
+    const byName = Object.fromEntries(tests.map((t) => [t.name, t]));
+    expect(byName["office/case"]!.category).toBe("office");
+    expect(byName["plain/case"]!.category).toBeUndefined();
+  });
+
+  it("resolves `additional_skills` against repo root onto additionalSkillPaths", async () => {
+    await writeCase("multi/case", {
+      skillPath: "skills/primary/SKILL.md",
+      threshold: 70,
+      rubric: "r",
+      prompt: "p",
+      additionalSkills: ["skills/extra-a/SKILL.md", "skills/extra-b/SKILL.md"],
+    });
+
+    const tests = await discoverTests(tmp, "/repo/root");
+    expect(tests).toHaveLength(1);
+    expect(tests[0]!.skillPath).toBe("/repo/root/skills/primary/SKILL.md");
+    expect(tests[0]!.additionalSkillPaths).toEqual([
+      "/repo/root/skills/extra-a/SKILL.md",
+      "/repo/root/skills/extra-b/SKILL.md",
+    ]);
   });
 
   it("sorts results by name", async () => {
@@ -121,6 +182,35 @@ describe("discoverTests", () => {
 
     const tests = await discoverTests(tmp, tmp);
     expect(tests.map((t) => t.name)).toEqual(["outer"]);
+  });
+});
+
+describe("getCategories", () => {
+  const stub = (name: string, category?: string): TestCase => ({
+    name,
+    dir: "/x",
+    skillPath: "/x/SKILL.md",
+    additionalSkillPaths: [],
+    threshold: 70,
+    judgeRubric: "r",
+    prompt: "p",
+    beforeDir: "/x/before",
+    afterDir: "/x/after",
+    category,
+  });
+
+  it("returns sorted distinct non-empty categories", () => {
+    const tests = [
+      stub("a", "office"),
+      stub("b", "prompts"),
+      stub("c", "office"),
+      stub("d"),
+    ];
+    expect(getCategories(tests)).toEqual(["office", "prompts"]);
+  });
+
+  it("returns an empty array when no test has a category", () => {
+    expect(getCategories([stub("a"), stub("b")])).toEqual([]);
   });
 });
 
@@ -203,5 +293,91 @@ describe("printResult / printSummary", () => {
     expect(all).toContain("Results: 1 passed, 1 failed, 2 total");
     expect(all).toContain("Failed:");
     expect(all).toContain("bad (50% < 70%)");
+  });
+});
+
+describe("runAll (--dry-run filters)", () => {
+  let logs: string[];
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logs = [];
+    logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(" "));
+    });
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+  });
+
+  async function seedTwoCategories() {
+    await writeCase("office/a", {
+      skillPath: "skills/x/SKILL.md",
+      threshold: 70,
+      rubric: "r",
+      prompt: "p",
+      category: "office",
+    });
+    await writeCase("office/b", {
+      skillPath: "skills/x/SKILL.md",
+      threshold: 70,
+      rubric: "r",
+      prompt: "p",
+      category: "office",
+    });
+    await writeCase("prompts/a", {
+      skillPath: "skills/x/SKILL.md",
+      threshold: 70,
+      rubric: "r",
+      prompt: "p",
+      category: "prompts",
+    });
+    await writeCase("uncat/a", {
+      skillPath: "skills/x/SKILL.md",
+      threshold: 70,
+      rubric: "r",
+      prompt: "p",
+    });
+  }
+
+  function configFor(extra: Partial<RunnerConfig>): RunnerConfig {
+    return {
+      casesDir: tmp,
+      repoRoot: tmp,
+      outputDir: join(tmp, "output"),
+      agent: "opencode",
+      workerModel: "x",
+      judgeModel: "y",
+      apiKey: "",
+      baseUrl: "https://example/v1",
+      dryRun: true,
+      timeoutMs: 1000,
+      collectMetrics: false,
+      metricsUrl: "https://example/metrics",
+      headers: {},
+      ciContext: { project: "p", pipeline_id: "1", commit_sha: "c", branch: "b" },
+      ...extra,
+    };
+  }
+
+  it("--category keeps only matching tests", async () => {
+    await seedTwoCategories();
+    const results = await runAll(configFor({ category: "office" }));
+    expect(results.map((r) => r.name).sort()).toEqual(["office/a", "office/b"]);
+  });
+
+  it("--not-category excludes tests in any listed category (uncategorized still pass through)", async () => {
+    await seedTwoCategories();
+    const results = await runAll(configFor({ notCategory: "office,prompts" }));
+    expect(results.map((r) => r.name).sort()).toEqual(["uncat/a"]);
+  });
+
+  it("--filter combines with --category (intersection)", async () => {
+    await seedTwoCategories();
+    const results = await runAll(
+      configFor({ category: "office", filter: "a" }),
+    );
+    expect(results.map((r) => r.name)).toEqual(["office/a"]);
   });
 });

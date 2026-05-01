@@ -27,6 +27,7 @@ export { evaluate, diagnoseFailures, type JudgeConfig, type DiagnoseConfig } fro
 export {
   checkSkillUsage,
   discoverTests,
+  getCategories,
   printResult,
   printSummary,
   runAll,
@@ -42,5 +43,6 @@ export {
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_SEC,
   type CliParseResult,
+  type ListCategoriesResult,
   type ParseEnv,
 } from "./cli-parser.js";
