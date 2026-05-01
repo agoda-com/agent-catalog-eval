@@ -114,6 +114,47 @@ flow). Mock at seams (`OpenAI` client, `child_process.spawn`).
 - Keep `chalk` and `yaml` as `noExternal` in `tsup.config.ts` — both are
   ESM-only and bundling is what makes the cjs bin actually run.
 
+### 5. Don't leak Agoda-internal information
+
+This is a **public** repo (`agoda-com/agent-catalog-eval`, published to public
+npm). Treat everything you write here — code, tests, docs, commit messages,
+PR titles, PR descriptions, changesets, comments, fixtures, snapshots,
+sample output — as world-readable, because it is.
+
+**Never include:**
+
+- Internal hostnames or URLs:
+  - `*.agoda.is`, `*.agoda.com`, `*.agodadev.io`, `*.agoda.local`, anything
+    behind the corporate VPN.
+  - Examples of what NOT to write: `https://gitlab.agodadev.io/...`,
+    `https://genai-gateway.agoda.is/...`, internal Grafana / Jira / Confluence
+    URLs.
+- Names of internal-only projects, services, repos, or teams (e.g. internal
+  GitLab project paths). If you need to motivate a change with a downstream
+  use case, describe it generically — "a downstream consumer", "a CI fan-out
+  use case" — without naming the internal project.
+- Internal MR/issue references (`!123`, `MR !30`). GitHub PR numbers within
+  this repo are fine; cross-system links to internal trackers are not.
+- API keys, tokens, employee emails, internal IPs, internal team Slack
+  channels, internal model gateway endpoints, internal pipeline IDs.
+- Anything you wouldn't put in a tweet about your employer.
+
+**OK to mention:**
+
+- Public npm package names (`agoda-agent-catalog-eval`, `openai`, etc.).
+- Public GitHub URLs under `agoda-com/*` and other public orgs.
+- Generic technical concepts (OpenAI gateway, OpenTelemetry, GitLab CI as a
+  category) without naming our specific instances.
+
+**Before opening a PR**, grep the diff and the PR description for
+`agoda.is`, `agoda.com`, `agodadev`, and any internal project name you know
+of. If you find a hit that isn't the public npm package or the public
+`agoda-com` GitHub org, scrub it. The same applies when updating an existing
+PR description.
+
+If you spot leaked internal info already on `main` or in a merged PR, raise
+it with the maintainer rather than silently rewriting history.
+
 ## Release flow
 
 - Push to `main` → `.github/workflows/changeset.yml` either opens a "Version
