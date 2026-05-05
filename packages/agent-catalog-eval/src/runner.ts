@@ -131,6 +131,22 @@ async function executeTest(
       baseUrl: config.baseUrl,
       timeoutMs: config.timeoutMs,
       headers: config.headers,
+      otel: config.otel
+        ? {
+            config: config.otel,
+            resourceAttributes: {
+              "agoda.eval.test_name": testCase.name,
+              "agoda.eval.skill_name": skillName,
+              "agoda.eval.agent": config.agent,
+              "agoda.eval.worker_model": config.workerModel,
+              "agoda.ci.project": config.ciContext.project,
+              "agoda.ci.pipeline_id": config.ciContext.pipeline_id,
+              "agoda.ci.commit_sha": config.ciContext.commit_sha,
+              "agoda.ci.branch": config.ciContext.branch,
+              ...(testCase.category ? { "agoda.eval.category": testCase.category } : {}),
+            },
+          }
+        : undefined,
     });
 
     const traceDir = join(workDir, TRACE_DIR);

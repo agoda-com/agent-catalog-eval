@@ -62,6 +62,24 @@ export interface CiContext {
   branch: string;
 }
 
+/**
+ * OpenTelemetry tracing config for the opencode agent.
+ * When `endpoint` is set, the runner installs the
+ * `@devtheops/opencode-plugin-otel` plugin into the per-test opencode.json
+ * and sets the matching OPENCODE_* env vars on the spawned process.
+ *
+ * Other agents (cursor, claude-code) ignore this config — they have their
+ * own telemetry stories.
+ */
+export interface OtelConfig {
+  /** OTLP endpoint URL (e.g. http://localhost:4317). */
+  endpoint: string;
+  /** OTLP protocol. Plugin supports "grpc" and "http/protobuf". */
+  protocol: "grpc" | "http/protobuf";
+  /** Service name reported on spans. Defaults to "agoda-agent-catalog-eval". */
+  serviceName: string;
+}
+
 export interface RunnerConfig {
   casesDir: string;
   repoRoot: string;
@@ -82,6 +100,8 @@ export interface RunnerConfig {
   metricsUrl: string;
   headers: Record<string, string>;
   ciContext: CiContext;
+  /** When set, opencode runs export OpenTelemetry traces to this endpoint. */
+  otel?: OtelConfig;
 }
 
 export interface TelemetryTestResult {

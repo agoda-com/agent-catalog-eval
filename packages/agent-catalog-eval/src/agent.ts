@@ -1,7 +1,18 @@
 import { spawn } from "node:child_process";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentResult, AgentType } from "./types.js";
+import type { AgentResult, AgentType, OtelConfig } from "./types.js";
+
+export const OTEL_PLUGIN_NAME = "@devtheops/opencode-plugin-otel";
+
+export interface OtelRunContext {
+  config: OtelConfig;
+  /**
+   * Extra resource attributes to set on emitted spans (test name, project,
+   * pipeline id, etc.). Merged into OTEL_RESOURCE_ATTRIBUTES.
+   */
+  resourceAttributes?: Record<string, string>;
+}
 
 export interface AgentRunConfig {
   workDir: string;
@@ -16,6 +27,8 @@ export interface AgentRunConfig {
   baseUrl: string;
   timeoutMs: number;
   headers: Record<string, string>;
+  /** When set, opencode runs export OTLP traces. Ignored by other agents. */
+  otel?: OtelRunContext;
 }
 
 const MAX_OUTPUT = 10 * 1024 * 1024;
@@ -85,8 +98,9 @@ async function writeOpenCodeConfig(
   model: string,
   baseUrl: string,
   headers: Record<string, string>,
+  otel?: OtelRunContext,
 ) {
-  const config = {
+  const config: Record<string, unknown> = {
     $schema: "https://opencode.ai/config.json",
     model: `gateway/${model}`,
     provider: {
@@ -103,7 +117,30 @@ async function writeOpenCodeConfig(
       },
     },
   };
+  if (otel) {
+    config.plugin = [OTEL_PLUGIN_NAME];
+  }
   await writeFile(join(workDir, "opencode.json"), JSON.stringify(config, null, 2));
+}
+
+/** Builds OPENCODE_* / OTEL_* env vars for a single opencode run. */
+export function buildOtelEnv(otel: OtelRunContext): Record<string, string> {
+  const out: Record<string, string> = {
+    OPENCODE_ENABLE_TELEMETRY: "1",
+    OPENCODE_OTLP_ENDPOINT: otel.config.endpoint,
+    OPENCODE_OTLP_PROTOCOL: otel.config.protocol,
+    OTEL_SERVICE_NAME: otel.config.serviceName,
+    OTEL_EXPORTER_OTLP_ENDPOINT: otel.config.endpoint,
+    OTEL_EXPORTER_OTLP_PROTOCOL: otel.config.protocol,
+  };
+
+  const attrs = otel.resourceAttributes;
+  if (attrs && Object.keys(attrs).length > 0) {
+    out.OTEL_RESOURCE_ATTRIBUTES = Object.entries(attrs)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(",");
+  }
+  return out;
 }
 
 async function runOpenCode(
@@ -114,8 +151,9 @@ async function runOpenCode(
   baseUrl: string,
   headers: Record<string, string>,
   timeoutMs: number,
+  otel?: OtelRunContext,
 ): Promise<AgentResult> {
-  await writeOpenCodeConfig(workDir, model, baseUrl, headers);
+  await writeOpenCodeConfig(workDir, model, baseUrl, headers, otel);
 
   return execAgent(
     "opencode",
@@ -126,6 +164,7 @@ async function runOpenCode(
         ...process.env,
         OPENAI_API_KEY: apiKey,
         OPENCODE_SKIP_MIGRATIONS: "1",
+        ...(otel ? buildOtelEnv(otel) : {}),
       },
     },
     timeoutMs,
@@ -163,6 +202,7 @@ export async function runAgent(config: AgentRunConfig): Promise<AgentResult> {
     baseUrl,
     headers,
     timeoutMs,
+    otel,
   } = config;
 
   await placeSkill(workDir, skillName, skillContent);
@@ -174,7 +214,7 @@ export async function runAgent(config: AgentRunConfig): Promise<AgentResult> {
     case "cursor":
       return runCursor(workDir, prompt, timeoutMs);
     case "opencode":
-      return runOpenCode(workDir, prompt, model, apiKey, baseUrl, headers, timeoutMs);
+      return runOpenCode(workDir, prompt, model, apiKey, baseUrl, headers, timeoutMs, otel);
     case "claude-code":
       return runClaudeCode(workDir, prompt, timeoutMs);
   }

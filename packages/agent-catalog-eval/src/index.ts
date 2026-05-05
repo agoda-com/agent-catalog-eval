@@ -5,6 +5,7 @@ export type {
   EvalConfig,
   FileSnapshot,
   JudgeVerdict,
+  OtelConfig,
   RunnerConfig,
   TelemetryPayload,
   TelemetryTestResult,
@@ -12,17 +13,17 @@ export type {
   TestResult,
 } from "./types.js";
 
-export {
-  collectFiles,
-  copyDir,
-  createWorkDir,
-  formatFiles,
-  removeDir,
-} from "./files.js";
+export { collectFiles, copyDir, createWorkDir, formatFiles, removeDir } from "./files.js";
 
 export { detectCiContext } from "./ci.js";
 export { findRepoRoot } from "./repo-root.js";
-export { runAgent, type AgentRunConfig } from "./agent.js";
+export {
+  runAgent,
+  buildOtelEnv,
+  OTEL_PLUGIN_NAME,
+  type AgentRunConfig,
+  type OtelRunContext,
+} from "./agent.js";
 export { evaluate, diagnoseFailures, type JudgeConfig, type DiagnoseConfig } from "./judge.js";
 export {
   checkSkillUsage,
@@ -42,6 +43,8 @@ export {
   DEFAULT_JUDGE_MODEL,
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_SEC,
+  DEFAULT_OTEL_PROTOCOL,
+  DEFAULT_OTEL_SERVICE_NAME,
   type CliParseResult,
   type ListCategoriesResult,
   type ParseEnv,

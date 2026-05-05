@@ -93,10 +93,7 @@ describe("parseCliArgs", () => {
   });
 
   it("parses repeatable --header KEY=VALUE into a map", () => {
-    const result = parseCliArgs(
-      ["--header", "x-team=backend", "--header", "x-env=ci"],
-      env(),
-    );
+    const result = parseCliArgs(["--header", "x-team=backend", "--header", "x-env=ci"], env());
     expect(result.kind).toBe("config");
     if (result.kind === "config") {
       expect(result.config.headers).toEqual({
@@ -240,5 +237,88 @@ describe("parseCliArgs", () => {
     if (result.kind === "list-categories") {
       expect(result.repoRoot).toBe("/monorepo");
     }
+  });
+
+  describe("--otel-* flags", () => {
+    it("leaves otel undefined when no endpoint is configured", () => {
+      const result = parseCliArgs([], env());
+      expect(result.kind).toBe("config");
+      if (result.kind === "config") {
+        expect(result.config.otel).toBeUndefined();
+      }
+    });
+
+    it("--otel-endpoint enables tracing with grpc/default service name", () => {
+      const result = parseCliArgs(["--otel-endpoint", "http://collector:4317"], env());
+      expect(result.kind).toBe("config");
+      if (result.kind === "config") {
+        expect(result.config.otel).toEqual({
+          endpoint: "http://collector:4317",
+          protocol: "grpc",
+          serviceName: "agoda-agent-catalog-eval",
+        });
+      }
+    });
+
+    it("OTEL_EXPORTER_OTLP_ENDPOINT enables tracing without a flag", () => {
+      const result = parseCliArgs(
+        [],
+        env({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }),
+      );
+      expect(result.kind).toBe("config");
+      if (result.kind === "config") {
+        expect(result.config.otel?.endpoint).toBe("http://collector:4318");
+      }
+    });
+
+    it("--otel-protocol overrides the default", () => {
+      const result = parseCliArgs(
+        ["--otel-endpoint", "http://collector:4318", "--otel-protocol", "http/protobuf"],
+        env(),
+      );
+      expect(result.kind).toBe("config");
+      if (result.kind === "config") {
+        expect(result.config.otel?.protocol).toBe("http/protobuf");
+      }
+    });
+
+    it("rejects an invalid --otel-protocol", () => {
+      const result = parseCliArgs(["--otel-endpoint", "http://x", "--otel-protocol", "udp"], env());
+      expect(result.kind).toBe("error");
+      if (result.kind === "error") {
+        expect(result.message).toContain('Invalid --otel-protocol "udp"');
+      }
+    });
+
+    it("OTEL_EXPORTER_OTLP_PROTOCOL is honoured when no flag is set", () => {
+      const result = parseCliArgs(
+        ["--otel-endpoint", "http://x"],
+        env({ OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf" }),
+      );
+      expect(result.kind).toBe("config");
+      if (result.kind === "config") {
+        expect(result.config.otel?.protocol).toBe("http/protobuf");
+      }
+    });
+
+    it("--otel-service-name and OTEL_SERVICE_NAME control the service name", () => {
+      const flag = parseCliArgs(
+        ["--otel-endpoint", "http://x", "--otel-service-name", "my-runner"],
+        env(),
+      );
+      expect(flag.kind).toBe("config");
+      if (flag.kind === "config") {
+        expect(flag.config.otel?.serviceName).toBe("my-runner");
+      }
+
+      const fromEnv = parseCliArgs(
+        ["--otel-endpoint", "http://x"],
+        env({ OTEL_SERVICE_NAME: "from-env" }),
+      );
+      expect(fromEnv.kind).toBe("config");
+      if (fromEnv.kind === "config") {
+        expect(fromEnv.config.otel?.serviceName).toBe("from-env");
+      }
+    });
   });
 });
