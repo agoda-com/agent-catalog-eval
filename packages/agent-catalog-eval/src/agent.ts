@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentResult, AgentType, OtelConfig } from "./types.js";
+import { injectTraceContext } from "./tracing.js";
 
 export const OTEL_PLUGIN_NAME = "@devtheops/opencode-plugin-otel";
 
@@ -159,6 +160,23 @@ export function buildOtelEnv(
   return out;
 }
 
+/**
+ * Returns the W3C trace context from the active OTel context as upper-case
+ * env vars (TRACEPARENT / TRACESTATE). Empty when there is no active span,
+ * so the OpenCode plugin (or any future trace-context-aware consumer) can
+ * stitch its spans under the parent `eval.test` span when one exists.
+ */
+export function buildTraceContextEnv(): Record<string, string> {
+  const carrier = injectTraceContext({});
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(carrier)) {
+    if (typeof value === "string" && value.length > 0) {
+      out[key.toUpperCase()] = value;
+    }
+  }
+  return out;
+}
+
 async function runOpenCode(
   workDir: string,
   prompt: string,
@@ -181,6 +199,7 @@ async function runOpenCode(
         OPENAI_API_KEY: apiKey,
         OPENCODE_SKIP_MIGRATIONS: "1",
         ...(otel ? buildOtelEnv(otel, process.env.OTEL_RESOURCE_ATTRIBUTES) : {}),
+        ...(otel ? buildTraceContextEnv() : {}),
       },
     },
     timeoutMs,

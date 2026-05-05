@@ -20,10 +20,19 @@ export { findRepoRoot } from "./repo-root.js";
 export {
   runAgent,
   buildOtelEnv,
+  buildTraceContextEnv,
   OTEL_PLUGIN_NAME,
   type AgentRunConfig,
   type OtelRunContext,
 } from "./agent.js";
+export {
+  initTracing,
+  injectTraceContext,
+  withSpan,
+  getTracer,
+  TRACER_NAME,
+  type TracingHandle,
+} from "./tracing.js";
 export { evaluate, diagnoseFailures, type JudgeConfig, type DiagnoseConfig } from "./judge.js";
 export {
   checkSkillUsage,
