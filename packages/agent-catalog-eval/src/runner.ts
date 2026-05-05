@@ -3,6 +3,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse } from "yaml";
 import chalk from "chalk";
+import type { Span } from "@opentelemetry/api";
 import type {
   AgentResult,
   AgentType,
@@ -117,7 +118,7 @@ async function executeTest(testCase: TestCase, config: RunnerConfig): Promise<Te
 async function runTestBody(
   testCase: TestCase,
   config: RunnerConfig,
-  span: import("@opentelemetry/api").Span,
+  span: Span,
 ): Promise<TestResult> {
   const start = Date.now();
   const label = testCase.name.replace(/\//g, "-");
