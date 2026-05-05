@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import type { AgentType, CiContext, RunnerConfig } from "./types.js";
+import type { AgentType, CiContext, OtelConfig, RunnerConfig } from "./types.js";
 import { detectCiContext } from "./ci.js";
 import { findRepoRoot } from "./repo-root.js";
 import { DEFAULT_METRICS_URL } from "./telemetry.js";
@@ -16,6 +16,13 @@ export const DEFAULT_WORKER_MODEL = "claude-opus-4-7";
 export const DEFAULT_JUDGE_MODEL = "gemini-3.1-flash";
 export const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_TIMEOUT_SEC = 420;
+export const DEFAULT_OTEL_PROTOCOL: OtelConfig["protocol"] = "grpc";
+export const DEFAULT_OTEL_SERVICE_NAME = "agoda-agent-catalog-eval";
+
+const VALID_OTEL_PROTOCOLS: ReadonlySet<OtelConfig["protocol"]> = new Set([
+  "grpc",
+  "http/protobuf",
+]);
 
 export const HELP_TEXT = `agent-catalog-eval — run a coding agent against a catalog of skill test cases
 
@@ -49,6 +56,15 @@ Options:
                                (default: <cases-dir>/output)
   --base-url <url>           OpenAI-compatible base URL
                                (default: $OPENAI_BASE_URL or ${DEFAULT_BASE_URL})
+  --otel-endpoint <url>      OTLP endpoint for opencode tracing (e.g.
+                               http://localhost:4317). When set, the runner
+                               installs the @devtheops/opencode-plugin-otel
+                               plugin into the per-test opencode.json.
+                               (default: $OTEL_EXPORTER_OTLP_ENDPOINT, if set)
+  --otel-protocol <proto>    OTLP protocol: grpc or http/protobuf
+                               (default: $OTEL_EXPORTER_OTLP_PROTOCOL or ${DEFAULT_OTEL_PROTOCOL})
+  --otel-service-name <name> service.name attribute on emitted spans
+                               (default: $OTEL_SERVICE_NAME or ${DEFAULT_OTEL_SERVICE_NAME})
   --help, -h                 Show this help
 
 Environment:
@@ -56,6 +72,11 @@ Environment:
                              unless --dry-run)
   OPENAI_BASE_URL            Overrides --base-url default
   METRICS_URL                Overrides --metrics-url default
+  OTEL_EXPORTER_OTLP_ENDPOINT
+                             Overrides --otel-endpoint default
+  OTEL_EXPORTER_OTLP_PROTOCOL
+                             Overrides --otel-protocol default
+  OTEL_SERVICE_NAME          Overrides --otel-service-name default
 
 Examples:
   agent-catalog-eval                                # cases under cwd
@@ -94,11 +115,7 @@ export interface ListCategoriesResult {
   repoRoot: string;
 }
 
-export type CliParseResult =
-  | ParseResult
-  | HelpResult
-  | ErrorResult
-  | ListCategoriesResult;
+export type CliParseResult = ParseResult | HelpResult | ErrorResult | ListCategoriesResult;
 
 export interface ParseEnv {
   cwd: string;
@@ -144,6 +161,9 @@ export function parseCliArgs(argv: string[], envCtx: ParseEnv): CliParseResult {
     repoRoot: raw["repo-root"] as string | undefined,
     outputDir: raw["output-dir"] as string | undefined,
     baseUrl: raw["base-url"] as string | undefined,
+    otelEndpoint: raw["otel-endpoint"] as string | undefined,
+    otelProtocol: raw["otel-protocol"] as string | undefined,
+    otelServiceName: raw["otel-service-name"] as string | undefined,
   };
 
   if (v.help) return { kind: "help", text: HELP_TEXT };
@@ -202,6 +222,25 @@ export function parseCliArgs(argv: string[], envCtx: ParseEnv): CliParseResult {
     project: v.project ?? detected.project,
   };
 
+  const otelEndpoint = v.otelEndpoint ?? envCtx.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  const otelProtocolRaw =
+    v.otelProtocol ?? envCtx.env.OTEL_EXPORTER_OTLP_PROTOCOL ?? DEFAULT_OTEL_PROTOCOL;
+
+  let otel: OtelConfig | undefined;
+  if (otelEndpoint) {
+    if (!VALID_OTEL_PROTOCOLS.has(otelProtocolRaw as OtelConfig["protocol"])) {
+      return {
+        kind: "error",
+        message: `Invalid --otel-protocol "${otelProtocolRaw}". Must be one of: grpc, http/protobuf`,
+      };
+    }
+    otel = {
+      endpoint: otelEndpoint,
+      protocol: otelProtocolRaw as OtelConfig["protocol"],
+      serviceName: v.otelServiceName ?? envCtx.env.OTEL_SERVICE_NAME ?? DEFAULT_OTEL_SERVICE_NAME,
+    };
+  }
+
   const config: RunnerConfig = {
     casesDir,
     repoRoot,
@@ -220,6 +259,7 @@ export function parseCliArgs(argv: string[], envCtx: ParseEnv): CliParseResult {
     metricsUrl: v.metricsUrl ?? envCtx.env.METRICS_URL ?? DEFAULT_METRICS_URL,
     headers,
     ciContext,
+    otel,
   };
 
   return { kind: "config", config };
@@ -259,5 +299,8 @@ const OPTIONS = {
   "repo-root": { type: "string" },
   "output-dir": { type: "string" },
   "base-url": { type: "string" },
+  "otel-endpoint": { type: "string" },
+  "otel-protocol": { type: "string" },
+  "otel-service-name": { type: "string" },
   help: { type: "boolean", short: "h", default: false },
 } as const;
