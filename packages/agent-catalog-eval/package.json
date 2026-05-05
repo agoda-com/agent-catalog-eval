@@ -1,6 +1,6 @@
 {
   "name": "agoda-agent-catalog-eval",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "CLI to evaluate coding-agent skills against a catalog of test cases.",
   "type": "module",
   "main": "./dist/index.cjs",
