@@ -123,8 +123,17 @@ async function writeOpenCodeConfig(
   await writeFile(join(workDir, "opencode.json"), JSON.stringify(config, null, 2));
 }
 
-/** Builds OPENCODE_* / OTEL_* env vars for a single opencode run. */
-export function buildOtelEnv(otel: OtelRunContext): Record<string, string> {
+/**
+ * Builds OPENCODE_* / OTEL_* env vars for a single opencode run.
+ *
+ * `existingResourceAttributes` (typically `process.env.OTEL_RESOURCE_ATTRIBUTES`)
+ * is preserved and prepended so callers' attributes aren't clobbered when the
+ * returned record is spread on top of `process.env`.
+ */
+export function buildOtelEnv(
+  otel: OtelRunContext,
+  existingResourceAttributes?: string,
+): Record<string, string> {
   const out: Record<string, string> = {
     OPENCODE_ENABLE_TELEMETRY: "1",
     OPENCODE_OTLP_ENDPOINT: otel.config.endpoint,
@@ -134,11 +143,18 @@ export function buildOtelEnv(otel: OtelRunContext): Record<string, string> {
     OTEL_EXPORTER_OTLP_PROTOCOL: otel.config.protocol,
   };
 
-  const attrs = otel.resourceAttributes;
-  if (attrs && Object.keys(attrs).length > 0) {
-    out.OTEL_RESOURCE_ATTRIBUTES = Object.entries(attrs)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(",");
+  const newAttrs = otel.resourceAttributes;
+  const newAttrsStr =
+    newAttrs && Object.keys(newAttrs).length > 0
+      ? Object.entries(newAttrs)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(",")
+      : "";
+
+  const existing = existingResourceAttributes?.trim() ?? "";
+  const merged = [existing, newAttrsStr].filter(Boolean).join(",");
+  if (merged) {
+    out.OTEL_RESOURCE_ATTRIBUTES = merged;
   }
   return out;
 }
@@ -164,7 +180,7 @@ async function runOpenCode(
         ...process.env,
         OPENAI_API_KEY: apiKey,
         OPENCODE_SKIP_MIGRATIONS: "1",
-        ...(otel ? buildOtelEnv(otel) : {}),
+        ...(otel ? buildOtelEnv(otel, process.env.OTEL_RESOURCE_ATTRIBUTES) : {}),
       },
     },
     timeoutMs,

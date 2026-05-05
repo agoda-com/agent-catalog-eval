@@ -62,6 +62,35 @@ describe("buildOtelEnv", () => {
     const env = buildOtelEnv(baseOtel);
     expect(env.OTEL_RESOURCE_ATTRIBUTES).toBeUndefined();
   });
+
+  it("preserves an existing OTEL_RESOURCE_ATTRIBUTES value by prepending it", () => {
+    const env = buildOtelEnv(
+      {
+        ...baseOtel,
+        resourceAttributes: { "agoda.eval.test_name": "ioc/refactor" },
+      },
+      "deployment.environment=ci,k8s.namespace=skills",
+    );
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe(
+      "deployment.environment=ci,k8s.namespace=skills,agoda.eval.test_name=ioc/refactor",
+    );
+  });
+
+  it("uses only the existing value when no new attributes are given", () => {
+    const env = buildOtelEnv(baseOtel, "deployment.environment=ci");
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("deployment.environment=ci");
+  });
+
+  it("ignores empty/whitespace existing values", () => {
+    const env = buildOtelEnv(
+      {
+        ...baseOtel,
+        resourceAttributes: { foo: "bar" },
+      },
+      "   ",
+    );
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("foo=bar");
+  });
 });
 
 describe("runAgent → opencode.json", () => {
