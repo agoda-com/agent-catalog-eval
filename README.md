@@ -119,7 +119,7 @@ If you pass the `--collect` flag, we'll POST a lovely `application/json` summary
 
 ## OpenTelemetry Tracing: Watch the Agent Think 🛰️
 
-Want to see what `opencode` is _actually_ doing while it grinds away on each test? Pipe its OpenTelemetry traces to your collector by passing `--otel-endpoint`:
+Want to see what your tests are _actually_ doing — both the agent runs and the judge LLM calls? Wire up an OTLP endpoint and we'll ship traces from both:
 
 ```bash
 agent-catalog-eval tests/e2e \
@@ -128,22 +128,36 @@ agent-catalog-eval tests/e2e \
   --otel-protocol grpc
 ```
 
-When `--otel-endpoint` is set, the runner does three things for every `opencode` run:
+When `--otel-endpoint` is set, the runner emits two flavours of spans:
+
+**1. Judge (LLM) spans — emitted from this CLI**
+
+The judge call to OpenAI is auto-instrumented with [`@arizeai/openinference-instrumentation-openai`](https://github.com/Arize-ai/openinference) using the OpenInference semantic conventions. That means [Arize](https://arize.com/) (and any other OpenInference-aware backend) renders these as proper LLM spans — input/output messages, model, token counts, cost — without any extra tagging from you.
+
+Each test is wrapped in an `eval.test` parent span with these attributes, so all the LLM activity for one test is grouped together in one trace:
+
+| Attribute                 | Value                                                            |
+| ------------------------- | ---------------------------------------------------------------- |
+| `agoda.eval.test_name`    | The test case name (e.g. `csharp-ioc/refactor-manual-di`)        |
+| `agoda.eval.skill_path`   | Path to the SKILL.md being evaluated                             |
+| `agoda.eval.threshold`    | Pass/fail score threshold for the test                           |
+| `agoda.eval.agent`        | `opencode` / `cursor` / `claude-code`                            |
+| `agoda.eval.worker_model` | The worker model name                                            |
+| `agoda.eval.judge_model`  | The judge model name                                             |
+| `agoda.eval.category`     | The eval category, when set                                      |
+| `agoda.eval.score`        | Final score from the judge (set when the test finishes)          |
+| `agoda.eval.passed`       | Whether the score met the threshold (set when the test finishes) |
+
+**2. OpenCode subprocess spans — emitted from `opencode`**
+
+For `opencode` runs, the runner also:
 
 1. Adds the [`@devtheops/opencode-plugin-otel`](https://github.com/DEVtheOPS/opencode-plugin-otel) plugin to the per-test `opencode.json`. (You'll need it on the box where opencode runs — the plugin is loaded from npm.)
 2. Sets `OPENCODE_ENABLE_TELEMETRY=1` and the `OPENCODE_OTLP_*` env vars on the spawned process, plus the standard `OTEL_EXPORTER_OTLP_*` and `OTEL_SERVICE_NAME` vars so any other OTEL-aware tool also picks them up.
-3. Packs per-test context into `OTEL_RESOURCE_ATTRIBUTES` so each span knows which test, skill, agent, project, pipeline, commit, and branch it came from:
+3. Packs the same per-test attributes into `OTEL_RESOURCE_ATTRIBUTES` so each opencode span knows which test, skill, agent, project, pipeline, commit, and branch it came from.
+4. Injects the W3C `TRACEPARENT` env var so plugins that honour it can stitch their spans under the parent `eval.test` span.
 
-| Attribute                                                    | Value                                                     |
-| ------------------------------------------------------------ | --------------------------------------------------------- |
-| `agoda.eval.test_name`                                       | The test case name (e.g. `csharp-ioc/refactor-manual-di`) |
-| `agoda.eval.skill_name`                                      | The skill being evaluated                                 |
-| `agoda.eval.agent`                                           | `opencode` (only opencode emits these traces today)       |
-| `agoda.eval.worker_model`                                    | The worker model name                                     |
-| `agoda.eval.category`                                        | The eval category, when set                               |
-| `agoda.ci.project` / `pipeline_id` / `commit_sha` / `branch` | Detected CI context                                       |
-
-> Tracing is opt-in and `opencode`-only. `cursor` and `claude-code` ignore the OTEL flags — they have their own telemetry stories.
+> The judge spans are emitted regardless of `--agent`. The opencode-specific bits only fire for `--agent opencode` — `cursor` and `claude-code` have their own telemetry stories.
 
 ### Local quickstart
 

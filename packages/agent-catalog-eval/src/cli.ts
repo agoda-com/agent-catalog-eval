@@ -1,8 +1,25 @@
 import { parseCliArgs } from "./cli-parser.js";
 import { discoverTests, getCategories, runAll } from "./runner.js";
 import { reportMetrics } from "./telemetry.js";
+import { initTracing } from "./tracing.js";
 
 async function main(): Promise<number> {
+  const tracing = initTracing();
+
+  try {
+    return await runMain();
+  } finally {
+    if (tracing.enabled) {
+      try {
+        await tracing.shutdown();
+      } catch (err) {
+        console.error("Warning: failed to flush traces:", err instanceof Error ? err.message : err);
+      }
+    }
+  }
+}
+
+async function runMain(): Promise<number> {
   const result = parseCliArgs(process.argv.slice(2), {
     cwd: process.cwd(),
     env: process.env,
@@ -46,10 +63,7 @@ async function main(): Promise<number> {
     try {
       await reportMetrics(results, config);
     } catch (err) {
-      console.error(
-        "Warning: failed to send telemetry:",
-        err instanceof Error ? err.message : err,
-      );
+      console.error("Warning: failed to send telemetry:", err instanceof Error ? err.message : err);
     }
   }
 

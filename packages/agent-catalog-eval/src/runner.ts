@@ -14,15 +14,13 @@ import type {
 import { collectFiles, copyDir, createWorkDir, removeDir } from "./files.js";
 import { runAgent } from "./agent.js";
 import { evaluate, diagnoseFailures } from "./judge.js";
+import { withSpan } from "./tracing.js";
 
 const SKIP_DIRS = new Set(["node_modules", "src", "dist", ".git", "output"]);
 
 const TRACE_DIR = ".agent-trace";
 
-export async function discoverTests(
-  casesDir: string,
-  repoRoot: string,
-): Promise<TestCase[]> {
+export async function discoverTests(casesDir: string, repoRoot: string): Promise<TestCase[]> {
   const tests: TestCase[] = [];
 
   async function walk(dir: string) {
@@ -37,9 +35,7 @@ export async function discoverTests(
         name: relative(casesDir, dir),
         dir,
         skillPath: resolve(repoRoot, config.skill_path),
-        additionalSkillPaths: (config.additional_skills ?? []).map((p) =>
-          resolve(repoRoot, p),
-        ),
+        additionalSkillPaths: (config.additional_skills ?? []).map((p) => resolve(repoRoot, p)),
         threshold: config.threshold,
         judgeRubric: config.judge_rubric,
         prompt,
@@ -98,9 +94,30 @@ export function checkSkillUsage(agentResult: AgentResult, skillName: string): bo
   );
 }
 
-async function executeTest(
+async function executeTest(testCase: TestCase, config: RunnerConfig): Promise<TestResult> {
+  // Wrap the whole test in an `eval.test` span so the OpenAI judge call
+  // (auto-instrumented by OpenInference) and any future child spans
+  // share a parent in Arize. When tracing isn't initialised the helper
+  // resolves to a no-op span, so this is free at runtime.
+  return withSpan(
+    "eval.test",
+    {
+      "agoda.eval.test_name": testCase.name,
+      "agoda.eval.skill_path": testCase.skillPath,
+      "agoda.eval.threshold": testCase.threshold,
+      "agoda.eval.agent": config.agent,
+      "agoda.eval.worker_model": config.workerModel,
+      "agoda.eval.judge_model": config.judgeModel,
+      ...(testCase.category ? { "agoda.eval.category": testCase.category } : {}),
+    },
+    (span) => runTestBody(testCase, config, span),
+  );
+}
+
+async function runTestBody(
   testCase: TestCase,
   config: RunnerConfig,
+  span: import("@opentelemetry/api").Span,
 ): Promise<TestResult> {
   const start = Date.now();
   const label = testCase.name.replace(/\//g, "-");
@@ -160,7 +177,9 @@ async function executeTest(
       );
     } else if (agentResult.exitCode !== 0) {
       console.log(
-        chalk.yellow(`  ⚠ Agent exited with code ${agentResult.exitCode} (still evaluating output)`),
+        chalk.yellow(
+          `  ⚠ Agent exited with code ${agentResult.exitCode} (still evaluating output)`,
+        ),
       );
     }
 
@@ -198,6 +217,11 @@ async function executeTest(
     const passed = verdict.score >= testCase.threshold;
     if (passed) await removeDir(workDir);
 
+    span.setAttributes({
+      "agoda.eval.score": verdict.score,
+      "agoda.eval.passed": passed,
+    });
+
     return {
       name: testCase.name,
       passed,
@@ -223,9 +247,7 @@ async function executeTest(
 
 export function printResult(result: TestResult) {
   const icon = result.passed ? chalk.green("✓") : chalk.red("✗");
-  const score = result.passed
-    ? chalk.green(`${result.score}%`)
-    : chalk.red(`${result.score}%`);
+  const score = result.passed ? chalk.green(`${result.score}%`) : chalk.red(`${result.score}%`);
   const time = chalk.dim(`${(result.durationMs / 1000).toFixed(1)}s`);
 
   console.log(`  ${icon} ${result.name}  ${score} (threshold: ${result.threshold}%)  ${time}`);
@@ -244,9 +266,7 @@ export function printSummary(results: TestResult[]) {
   const failed = results.length - passed;
 
   console.log(chalk.bold("━".repeat(60)));
-  console.log(
-    chalk.bold(`Results: ${passed} passed, ${failed} failed, ${results.length} total`),
-  );
+  console.log(chalk.bold(`Results: ${passed} passed, ${failed} failed, ${results.length} total`));
 
   if (failed > 0) {
     console.log(chalk.red.bold("\nFailed:"));
@@ -260,9 +280,7 @@ export function printSummary(results: TestResult[]) {
 export async function runAll(config: RunnerConfig): Promise<TestResult[]> {
   const allTests = await discoverTests(config.casesDir, config.repoRoot);
 
-  let tests = config.filter
-    ? allTests.filter((t) => t.name.includes(config.filter!))
-    : allTests;
+  let tests = config.filter ? allTests.filter((t) => t.name.includes(config.filter!)) : allTests;
 
   if (config.category) {
     tests = tests.filter((t) => t.category === config.category);
@@ -281,9 +299,7 @@ export async function runAll(config: RunnerConfig): Promise<TestResult[]> {
   console.log(chalk.bold(`\nDiscovered ${tests.length} test case(s):\n`));
   for (const t of tests) {
     const categoryLabel = t.category ? chalk.dim(` [${t.category}]`) : "";
-    console.log(
-      `  ${chalk.cyan("•")} ${t.name}${categoryLabel} (threshold: ${t.threshold}%)`,
-    );
+    console.log(`  ${chalk.cyan("•")} ${t.name}${categoryLabel} (threshold: ${t.threshold}%)`);
   }
   console.log();
 
