@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildOtelEnv, OTEL_PLUGIN_NAME, runAgent } from "./agent.js";
+import { buildOtelEnv, OTEL_PLUGIN_NAME, runAgent, skillsDirForAgent } from "./agent.js";
 import type { OtelRunContext } from "./agent.js";
+import type { AgentType } from "./types.js";
 
 let tmp: string;
 
@@ -91,6 +92,73 @@ describe("buildOtelEnv", () => {
     );
     expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("foo=bar");
   });
+});
+
+describe("skillsDirForAgent", () => {
+  it.each([
+    ["cursor", join(".cursor", "skills")],
+    ["opencode", join(".opencode", "skills")],
+    ["claude-code", join(".claude", "skills")],
+  ] as const)("returns the conventional skills dir for %s", (agent, expected) => {
+    expect(skillsDirForAgent(agent as AgentType)).toBe(expected);
+  });
+});
+
+describe("runAgent → skill placement", () => {
+  async function exists(p: string): Promise<boolean> {
+    try {
+      await stat(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Drive runAgent through skill placement. We don't need the agent binary
+   * to exist: spawning a missing binary rejects with ENOENT, but by then
+   * the SKILL.md has already been written.
+   */
+  async function placeSkillVia(agent: AgentType) {
+    await runAgent({
+      workDir: tmp,
+      prompt: "noop",
+      skillContent: "# primary skill",
+      skillName: "primary-skill",
+      additionalSkills: [{ name: "extra-skill", content: "# extra" }],
+      agent,
+      model: "claude-opus-4-7",
+      apiKey: "key",
+      baseUrl: "https://api.example/v1",
+      timeoutMs: 1000,
+      headers: {},
+    }).catch(() => {
+      // expected: agent binary not present in the test environment
+    });
+  }
+
+  it.each([
+    ["cursor", join(".cursor", "skills")],
+    ["opencode", join(".opencode", "skills")],
+    ["claude-code", join(".claude", "skills")],
+  ] as const)(
+    "places SKILL.md (and additional skills) in %s's own discovery dir",
+    async (agent, dir) => {
+      await placeSkillVia(agent as AgentType);
+
+      expect(await exists(join(tmp, dir, "primary-skill", "SKILL.md"))).toBe(true);
+      expect(await exists(join(tmp, dir, "extra-skill", "SKILL.md"))).toBe(true);
+
+      // It must NOT leak into other agents' discovery dirs.
+      for (const other of [".cursor/skills", ".opencode/skills", ".claude/skills"]) {
+        if (other === dir) continue;
+        expect(await exists(join(tmp, other, "primary-skill", "SKILL.md"))).toBe(false);
+      }
+
+      const content = await readFile(join(tmp, dir, "primary-skill", "SKILL.md"), "utf-8");
+      expect(content).toBe("# primary skill");
+    },
+  );
 });
 
 describe("runAgent → opencode.json", () => {

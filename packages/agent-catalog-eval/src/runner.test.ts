@@ -200,12 +200,7 @@ describe("getCategories", () => {
   });
 
   it("returns sorted distinct non-empty categories", () => {
-    const tests = [
-      stub("a", "office"),
-      stub("b", "prompts"),
-      stub("c", "office"),
-      stub("d"),
-    ];
+    const tests = [stub("a", "office"), stub("b", "prompts"), stub("c", "office"), stub("d")];
     expect(getCategories(tests)).toEqual(["office", "prompts"]);
   });
 
@@ -218,17 +213,35 @@ describe("checkSkillUsage", () => {
   const empty = { stdout: "", stderr: "", exitCode: 0, timedOut: false };
 
   it("matches when the skill name appears in stdout", () => {
-    expect(
-      checkSkillUsage({ ...empty, stdout: "applying my-skill now" }, "my-skill"),
-    ).toBe(true);
+    expect(checkSkillUsage({ ...empty, stdout: "applying my-skill now" }, "my-skill")).toBe(true);
   });
 
   it("matches when SKILL.md appears in stderr", () => {
     expect(checkSkillUsage({ ...empty, stderr: "loaded SKILL.md" }, "other")).toBe(true);
   });
 
-  it("matches the literal .cursor/skills path", () => {
+  it("matches the literal .cursor/skills path when no agent is given", () => {
     expect(checkSkillUsage({ ...empty, stdout: "found .cursor/skills/x" }, "x")).toBe(true);
+  });
+
+  it("matches the .opencode/skills path when agent=opencode", () => {
+    expect(
+      checkSkillUsage(
+        { ...empty, stdout: "registered .opencode/skills/foo" },
+        "irrelevant",
+        "opencode",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches the .claude/skills path when agent=claude-code", () => {
+    expect(
+      checkSkillUsage(
+        { ...empty, stdout: "loaded .claude/skills/bar" },
+        "irrelevant",
+        "claude-code",
+      ),
+    ).toBe(true);
   });
 
   it("returns false when nothing matches", () => {
@@ -375,9 +388,7 @@ describe("runAll (--dry-run filters)", () => {
 
   it("--filter combines with --category (intersection)", async () => {
     await seedTwoCategories();
-    const results = await runAll(
-      configFor({ category: "office", filter: "a" }),
-    );
+    const results = await runAll(configFor({ category: "office", filter: "a" }));
     expect(results.map((r) => r.name)).toEqual(["office/a"]);
   });
 });

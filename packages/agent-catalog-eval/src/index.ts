@@ -21,6 +21,7 @@ export {
   runAgent,
   buildOtelEnv,
   buildTraceContextEnv,
+  skillsDirForAgent,
   OTEL_PLUGIN_NAME,
   type AgentRunConfig,
   type OtelRunContext,

@@ -13,7 +13,7 @@ import type {
   TestResult,
 } from "./types.js";
 import { collectFiles, copyDir, createWorkDir, removeDir } from "./files.js";
-import { runAgent } from "./agent.js";
+import { runAgent, skillsDirForAgent } from "./agent.js";
 import { evaluate, diagnoseFailures } from "./judge.js";
 import { withSpan } from "./tracing.js";
 
@@ -86,12 +86,15 @@ async function copyAgentLogs(traceDir: string, agent: AgentType) {
   }
 }
 
-export function checkSkillUsage(agentResult: AgentResult, skillName: string): boolean {
+export function checkSkillUsage(
+  agentResult: AgentResult,
+  skillName: string,
+  agent?: AgentType,
+): boolean {
   const combined = agentResult.stdout + agentResult.stderr;
+  const skillsPath = agent ? skillsDirForAgent(agent) : ".cursor/skills";
   return (
-    combined.includes(skillName) ||
-    combined.includes("SKILL.md") ||
-    combined.includes(".cursor/skills")
+    combined.includes(skillName) || combined.includes("SKILL.md") || combined.includes(skillsPath)
   );
 }
 
@@ -185,7 +188,7 @@ async function runTestBody(
     }
 
     for (const s of [{ name: skillName }, ...additionalSkills]) {
-      if (!checkSkillUsage(agentResult, s.name)) {
+      if (!checkSkillUsage(agentResult, s.name, config.agent)) {
         console.log(
           chalk.yellow(
             `  ⚠ Skill "${s.name}" was not referenced in agent output — ` +

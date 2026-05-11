@@ -34,8 +34,36 @@ export interface AgentRunConfig {
 
 const MAX_OUTPUT = 10 * 1024 * 1024;
 
-async function placeSkill(workDir: string, skillName: string, skillContent: string) {
-  const skillDir = join(workDir, ".cursor", "skills", skillName);
+/**
+ * The conventional skills directory each agent auto-discovers.
+ *
+ * Each agent only walks its own folder for `SKILL.md` files. If we drop the
+ * skill in the wrong place the agent never registers it and at best stumbles
+ * onto it via filesystem exploration — which is slow and often blows the
+ * per-test timeout.
+ *
+ * - cursor      → `.cursor/skills/`      (Cursor IDE / background agent)
+ * - opencode    → `.opencode/skills/`    (per OpenCode skills docs)
+ * - claude-code → `.claude/skills/`      (per Claude Code skills docs)
+ */
+export function skillsDirForAgent(agent: AgentType): string {
+  switch (agent) {
+    case "cursor":
+      return join(".cursor", "skills");
+    case "opencode":
+      return join(".opencode", "skills");
+    case "claude-code":
+      return join(".claude", "skills");
+  }
+}
+
+async function placeSkill(
+  workDir: string,
+  agent: AgentType,
+  skillName: string,
+  skillContent: string,
+) {
+  const skillDir = join(workDir, skillsDirForAgent(agent), skillName);
   await mkdir(skillDir, { recursive: true });
   await writeFile(join(skillDir, "SKILL.md"), skillContent);
 }
@@ -221,8 +249,11 @@ async function runClaudeCode(
 
 /**
  * Runs a coding agent against the working directory.
- * The skill is placed at .cursor/skills/{name}/SKILL.md — the same path
- * used in real projects. The agent must discover and apply it naturally.
+ *
+ * The skill is placed in the agent's own conventional discovery directory
+ * (see {@link skillsDirForAgent}) so each agent picks it up via its native
+ * skill auto-loader rather than having to find it via filesystem
+ * exploration.
  */
 export async function runAgent(config: AgentRunConfig): Promise<AgentResult> {
   const {
@@ -240,9 +271,9 @@ export async function runAgent(config: AgentRunConfig): Promise<AgentResult> {
     otel,
   } = config;
 
-  await placeSkill(workDir, skillName, skillContent);
+  await placeSkill(workDir, agent, skillName, skillContent);
   for (const s of additionalSkills) {
-    await placeSkill(workDir, s.name, s.content);
+    await placeSkill(workDir, agent, s.name, s.content);
   }
 
   switch (agent) {
