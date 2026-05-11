@@ -54,6 +54,10 @@ export function skillsDirForAgent(agent: AgentType): string {
       return join(".opencode", "skills");
     case "claude-code":
       return join(".claude", "skills");
+    default: {
+      const _exhaustiveCheck: never = agent;
+      throw new Error(`Unhandled agent type: ${String(_exhaustiveCheck)}`);
+    }
   }
 }
 
