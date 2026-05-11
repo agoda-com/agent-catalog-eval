@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  checkOpenCodeSkillSignals,
   checkSkillUsage,
+  describeOpenCodeSkillSignalFailure,
   discoverTests,
   getCategories,
   printResult,
@@ -249,6 +251,97 @@ describe("checkSkillUsage", () => {
   });
 });
 
+describe("checkOpenCodeSkillSignals", () => {
+  const empty = { stdout: "", stderr: "", exitCode: 0, timedOut: false };
+
+  // Realistic-shape lines lifted from the OpenCode debug log format.
+  const registrationLine = (name: string) =>
+    `service=permission permission=skill pattern=${name} ` +
+    `ruleset=[{"permission":"external_directory","pattern":"/builds/.../.opencode/skills/${name}/*","action":"allow"}]`;
+
+  const invocationLine =
+    `service=opencode-plugin-otel sessionID=abc tool_name=skill success=true duration_ms=42`;
+
+  it("marks each requested skill as registered when its permission line is present", () => {
+    const stdout = [registrationLine("foo"), registrationLine("bar"), invocationLine].join("\n");
+    const sig = checkOpenCodeSkillSignals({ ...empty, stdout }, ["foo", "bar"]);
+    expect(sig.registrations).toEqual([
+      { skill: "foo", registered: true },
+      { skill: "bar", registered: true },
+    ]);
+    expect(sig.anyInvoked).toBe(true);
+  });
+
+  it("marks a missing skill as not registered (the failing-job case)", () => {
+    const stdout = [registrationLine("skill-creator"), invocationLine].join("\n");
+    const sig = checkOpenCodeSkillSignals({ ...empty, stdout }, ["postgres-table-best-practices"]);
+    expect(sig.registrations).toEqual([
+      { skill: "postgres-table-best-practices", registered: false },
+    ]);
+  });
+
+  it("does not match a substring — `foo-bar` registration must not satisfy `foo`", () => {
+    const stdout = registrationLine("foo-bar");
+    const sig = checkOpenCodeSkillSignals({ ...empty, stdout }, ["foo"]);
+    expect(sig.registrations[0]!.registered).toBe(false);
+  });
+
+  it("anyInvoked is false when only `read` / `glob` tool events appear", () => {
+    const stdout =
+      `service=opencode-plugin-otel tool_name=read success=true\n` +
+      `service=opencode-plugin-otel tool_name=glob success=true`;
+    const sig = checkOpenCodeSkillSignals({ ...empty, stdout }, ["x"]);
+    expect(sig.anyInvoked).toBe(false);
+  });
+
+  it("inspects stderr too (OpenCode emits debug logs on both streams)", () => {
+    const sig = checkOpenCodeSkillSignals(
+      { ...empty, stderr: registrationLine("from-stderr") },
+      ["from-stderr"],
+    );
+    expect(sig.registrations[0]!.registered).toBe(true);
+  });
+
+  it("escapes regex metachars in skill names so e.g. dots are literal", () => {
+    const stdout = registrationLine("a.b");
+    const sig = checkOpenCodeSkillSignals({ ...empty, stdout }, ["aXb"]);
+    expect(sig.registrations[0]!.registered).toBe(false);
+  });
+});
+
+describe("describeOpenCodeSkillSignalFailure", () => {
+  it("returns undefined when every skill is registered AND something was invoked", () => {
+    expect(
+      describeOpenCodeSkillSignalFailure({
+        registrations: [{ skill: "foo", registered: true }],
+        anyInvoked: true,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("flags unregistered skills first (it's the more specific failure)", () => {
+    const msg = describeOpenCodeSkillSignalFailure({
+      registrations: [
+        { skill: "foo", registered: true },
+        { skill: "bar", registered: false },
+      ],
+      anyInvoked: false,
+    });
+    expect(msg).toContain("never registered");
+    expect(msg).toContain("bar");
+    expect(msg).not.toContain("foo,"); // only the unregistered ones are listed
+  });
+
+  it("flags missing invocation when everything was registered but the tool never fired", () => {
+    const msg = describeOpenCodeSkillSignalFailure({
+      registrations: [{ skill: "foo", registered: true }],
+      anyInvoked: false,
+    });
+    expect(msg).toContain("never invoked");
+    expect(msg).toContain("tool_name=skill");
+  });
+});
+
 describe("printResult / printSummary", () => {
   let logs: string[];
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -296,6 +389,48 @@ describe("printResult / printSummary", () => {
     expect(logs.join("\n")).toContain("Error: agent crashed");
   });
 
+  it("printResult surfaces error when not passed even with a non-zero score (signal failure case)", () => {
+    printResult({
+      name: "signal-fail",
+      passed: false,
+      score: 95,
+      threshold: 70,
+      reasoning: "judge thought it was great",
+      durationMs: 100,
+      error: "OpenCode never registered skill(s): foo",
+      skillSignals: {
+        registrations: [{ skill: "foo", registered: false }],
+        anyInvoked: false,
+      },
+    });
+
+    const all = logs.join("\n");
+    expect(all).toContain("Error: OpenCode never registered");
+    expect(all).toContain("skill registered:");
+    expect(all).toContain("foo");
+    expect(all).toContain("skill invoked:");
+  });
+
+  it("printResult shows skillSignals on a passing run (always-on visibility)", () => {
+    printResult({
+      name: "pass",
+      passed: true,
+      score: 90,
+      threshold: 70,
+      reasoning: "",
+      durationMs: 100,
+      skillSignals: {
+        registrations: [{ skill: "foo", registered: true }],
+        anyInvoked: true,
+      },
+    });
+
+    const all = logs.join("\n");
+    expect(all).toContain("skill registered:");
+    expect(all).toContain("foo");
+    expect(all).toContain("skill invoked:");
+  });
+
   it("printSummary reports counts and lists failures", () => {
     printSummary([
       { name: "ok", passed: true, score: 90, threshold: 70, reasoning: "", durationMs: 1 },
@@ -306,6 +441,25 @@ describe("printResult / printSummary", () => {
     expect(all).toContain("Results: 1 passed, 1 failed, 2 total");
     expect(all).toContain("Failed:");
     expect(all).toContain("bad (50% < 70%)");
+  });
+
+  it("printSummary tags skill-signal failures specifically", () => {
+    printSummary([
+      {
+        name: "signal-fail",
+        passed: false,
+        score: 95,
+        threshold: 70,
+        reasoning: "",
+        durationMs: 1,
+        skillSignals: {
+          registrations: [{ skill: "foo", registered: false }],
+          anyInvoked: false,
+        },
+      },
+    ]);
+
+    expect(logs.join("\n")).toContain("[skill-signal failure]");
   });
 });
 

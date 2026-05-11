@@ -5,8 +5,10 @@ export type {
   EvalConfig,
   FileSnapshot,
   JudgeVerdict,
+  OpenCodeSkillSignals,
   OtelConfig,
   RunnerConfig,
+  SkillRegistrationCheck,
   TelemetryPayload,
   TelemetryTestResult,
   TestCase,
@@ -38,6 +40,8 @@ export {
 export { evaluate, diagnoseFailures, type JudgeConfig, type DiagnoseConfig } from "./judge.js";
 export {
   checkSkillUsage,
+  checkOpenCodeSkillSignals,
+  describeOpenCodeSkillSignalFailure,
   discoverTests,
   getCategories,
   printResult,

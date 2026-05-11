@@ -25,3 +25,19 @@ workspace doesn't change.
 Adds public exports `skillsDirForAgent(agent)` and accepts an optional
 `agent` argument on `checkSkillUsage` so the "skill not referenced" warning
 matches against the right path. Both are additive.
+
+Also adds a hard post-run check for `--agent opencode` that greps the
+debug log for two signals:
+
+- registration: `service=permission permission=skill pattern=<name>` is
+  emitted once per skill the auto-discoverer finds at startup.
+- invocation: `tool_name=skill` appears each time the agent calls the
+  skill tool (reading the SKILL.md via `read` does NOT count).
+
+If either signal is missing, the test now fails regardless of the judge's
+score — a skill that was never registered or never invoked can't have
+caused the agent's output. The signals are printed on every opencode run
+(passing or failing) and a `[skill-signal failure]` tag is added to the
+summary line for the failure case. New `OpenCodeSkillSignals` /
+`SkillRegistrationCheck` types and `checkOpenCodeSkillSignals` /
+`describeOpenCodeSkillSignalFailure` helpers are exported.
