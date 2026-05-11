@@ -35,6 +35,29 @@ export interface JudgeVerdict {
   reasoning: string;
 }
 
+export interface SkillRegistrationCheck {
+  skill: string;
+  registered: boolean;
+}
+
+/**
+ * Hard-evidence check that OpenCode actually loaded and used a skill,
+ * derived from grepping the per-test stdout/stderr (which is also dumped
+ * to `.agent-trace/stdout.txt`). When either signal is missing the test
+ * fails regardless of the judge score — a skill that was never registered
+ * or never invoked can't have caused the agent's output.
+ */
+export interface OpenCodeSkillSignals {
+  /** One entry per skill we placed. `registered` is true when the OpenCode
+   * permission engine pre-evaluated a `permission=skill pattern=<name>` rule
+   * for it at startup, i.e. auto-discovery picked it up. */
+  registrations: SkillRegistrationCheck[];
+  /** True when at least one `tool_name=skill` event appears in the log,
+   * i.e. the agent invoked a skill via the skill tool (rather than just
+   * `read`-ing the SKILL.md file). */
+  anyInvoked: boolean;
+}
+
 export interface TestResult {
   name: string;
   passed: boolean;
@@ -44,6 +67,8 @@ export interface TestResult {
   durationMs: number;
   error?: string;
   category?: string;
+  /** OpenCode-only post-run skill-loading signals. Undefined for other agents. */
+  skillSignals?: OpenCodeSkillSignals;
 }
 
 export interface AgentResult {

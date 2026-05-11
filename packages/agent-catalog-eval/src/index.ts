@@ -5,8 +5,10 @@ export type {
   EvalConfig,
   FileSnapshot,
   JudgeVerdict,
+  OpenCodeSkillSignals,
   OtelConfig,
   RunnerConfig,
+  SkillRegistrationCheck,
   TelemetryPayload,
   TelemetryTestResult,
   TestCase,
@@ -19,8 +21,10 @@ export { detectCiContext } from "./ci.js";
 export { findRepoRoot } from "./repo-root.js";
 export {
   runAgent,
+  placeSkill,
   buildOtelEnv,
   buildTraceContextEnv,
+  skillsDirForAgent,
   OTEL_PLUGIN_NAME,
   type AgentRunConfig,
   type OtelRunContext,
@@ -36,6 +40,8 @@ export {
 export { evaluate, diagnoseFailures, type JudgeConfig, type DiagnoseConfig } from "./judge.js";
 export {
   checkSkillUsage,
+  checkOpenCodeSkillSignals,
+  describeOpenCodeSkillSignalFailure,
   discoverTests,
   getCategories,
   printResult,

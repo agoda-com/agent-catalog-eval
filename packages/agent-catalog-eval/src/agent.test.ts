@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildOtelEnv, OTEL_PLUGIN_NAME, runAgent } from "./agent.js";
+import {
+  buildOtelEnv,
+  OTEL_PLUGIN_NAME,
+  placeSkill,
+  runAgent,
+  skillsDirForAgent,
+} from "./agent.js";
 import type { OtelRunContext } from "./agent.js";
+import type { AgentType } from "./types.js";
 
 let tmp: string;
 
@@ -91,6 +98,50 @@ describe("buildOtelEnv", () => {
     );
     expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("foo=bar");
   });
+});
+
+describe("skillsDirForAgent", () => {
+  it.each([
+    ["cursor", join(".cursor", "skills")],
+    ["opencode", join(".opencode", "skills")],
+    ["claude-code", join(".claude", "skills")],
+  ] as const)("returns the conventional skills dir for %s", (agent, expected) => {
+    expect(skillsDirForAgent(agent as AgentType)).toBe(expected);
+  });
+});
+
+describe("placeSkill", () => {
+  async function exists(p: string): Promise<boolean> {
+    try {
+      await stat(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it.each([
+    ["cursor", join(".cursor", "skills")],
+    ["opencode", join(".opencode", "skills")],
+    ["claude-code", join(".claude", "skills")],
+  ] as const)(
+    "writes SKILL.md into %s's own discovery dir and nowhere else",
+    async (agent, dir) => {
+      await placeSkill(tmp, agent as AgentType, "primary-skill", "# primary skill");
+      await placeSkill(tmp, agent as AgentType, "extra-skill", "# extra");
+
+      expect(await exists(join(tmp, dir, "primary-skill", "SKILL.md"))).toBe(true);
+      expect(await exists(join(tmp, dir, "extra-skill", "SKILL.md"))).toBe(true);
+
+      for (const other of [".cursor/skills", ".opencode/skills", ".claude/skills"]) {
+        if (other === dir) continue;
+        expect(await exists(join(tmp, other, "primary-skill", "SKILL.md"))).toBe(false);
+      }
+
+      const content = await readFile(join(tmp, dir, "primary-skill", "SKILL.md"), "utf-8");
+      expect(content).toBe("# primary skill");
+    },
+  );
 });
 
 describe("runAgent → opencode.json", () => {

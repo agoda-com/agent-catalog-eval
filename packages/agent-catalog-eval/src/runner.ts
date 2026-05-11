@@ -8,12 +8,13 @@ import type {
   AgentResult,
   AgentType,
   EvalConfig,
+  OpenCodeSkillSignals,
   RunnerConfig,
   TestCase,
   TestResult,
 } from "./types.js";
 import { collectFiles, copyDir, createWorkDir, removeDir } from "./files.js";
-import { runAgent } from "./agent.js";
+import { runAgent, skillsDirForAgent } from "./agent.js";
 import { evaluate, diagnoseFailures } from "./judge.js";
 import { withSpan } from "./tracing.js";
 
@@ -86,13 +87,82 @@ async function copyAgentLogs(traceDir: string, agent: AgentType) {
   }
 }
 
-export function checkSkillUsage(agentResult: AgentResult, skillName: string): boolean {
+export function checkSkillUsage(
+  agentResult: AgentResult,
+  skillName: string,
+  agent?: AgentType,
+): boolean {
   const combined = agentResult.stdout + agentResult.stderr;
+  const skillsPath = agent ? skillsDirForAgent(agent) : ".cursor/skills";
   return (
-    combined.includes(skillName) ||
-    combined.includes("SKILL.md") ||
-    combined.includes(".cursor/skills")
+    combined.includes(skillName) || combined.includes("SKILL.md") || combined.includes(skillsPath)
   );
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Greps the OpenCode debug log for the two signals that prove a skill
+ * was actually loaded and used:
+ *
+ *   1. registration — `service=permission permission=skill pattern=<name>`
+ *      is logged once per skill the auto-discoverer finds at startup.
+ *      No line for `<name>` ⇒ OpenCode never saw the skill (most likely
+ *      because it was placed in a directory OpenCode doesn't scan).
+ *
+ *   2. invocation — `tool_name=skill` appears for each `tool_result` event
+ *      from the OTel plugin when the agent calls the skill tool. Reading
+ *      the SKILL.md file via the `read` tool does NOT count.
+ *
+ * These match what surfaces with `--log-level DEBUG --print-logs`, which
+ * is what the runner already passes to opencode.
+ */
+export function checkOpenCodeSkillSignals(
+  agentResult: AgentResult,
+  skillNames: string[],
+): OpenCodeSkillSignals {
+  const combined = agentResult.stdout + agentResult.stderr;
+
+  const registrations = skillNames.map((skill) => ({
+    skill,
+    // Anchor with whitespace (or end-of-string) after the name so e.g.
+    // `pattern=foo-bar` doesn't satisfy a request for `foo` — `\b` would,
+    // since `-` is not a word char.
+    registered: new RegExp(`permission=skill\\s+pattern=${escapeRegex(skill)}(?:\\s|$)`).test(
+      combined,
+    ),
+  }));
+
+  const anyInvoked = /\btool_name=skill\b/.test(combined);
+
+  return { registrations, anyInvoked };
+}
+
+/**
+ * Returns a non-empty error message when the OpenCode signals indicate a
+ * skill failed to load or wasn't used, otherwise `undefined`. The runner
+ * uses this to fail the test regardless of the judge's verdict.
+ */
+export function describeOpenCodeSkillSignalFailure(
+  signals: OpenCodeSkillSignals,
+): string | undefined {
+  const unregistered = signals.registrations.filter((r) => !r.registered).map((r) => r.skill);
+  if (unregistered.length > 0) {
+    return (
+      `OpenCode never registered skill(s): ${unregistered.join(", ")}. ` +
+      `Auto-discovery missed them — make sure they're in .opencode/skills/<name>/SKILL.md.`
+    );
+  }
+  if (!signals.anyInvoked) {
+    return (
+      `OpenCode registered the skill(s) but never invoked the skill tool ` +
+      `(no tool_name=skill event in the log). The agent worked around the skill ` +
+      `instead of using it.`
+    );
+  }
+  return undefined;
 }
 
 async function executeTest(testCase: TestCase, config: RunnerConfig): Promise<TestResult> {
@@ -184,14 +254,23 @@ async function runTestBody(
       );
     }
 
-    for (const s of [{ name: skillName }, ...additionalSkills]) {
-      if (!checkSkillUsage(agentResult, s.name)) {
-        console.log(
-          chalk.yellow(
-            `  ⚠ Skill "${s.name}" was not referenced in agent output — ` +
-              `the prompt may not trigger skill discovery, or the skill needs a better title/description`,
-          ),
-        );
+    const allSkillNames = [skillName, ...additionalSkills.map((s) => s.name)];
+
+    let skillSignals: OpenCodeSkillSignals | undefined;
+    let signalError: string | undefined;
+    if (config.agent === "opencode") {
+      skillSignals = checkOpenCodeSkillSignals(agentResult, allSkillNames);
+      signalError = describeOpenCodeSkillSignalFailure(skillSignals);
+    } else {
+      for (const name of allSkillNames) {
+        if (!checkSkillUsage(agentResult, name, config.agent)) {
+          console.log(
+            chalk.yellow(
+              `  ⚠ Skill "${name}" was not referenced in agent output — ` +
+                `the prompt may not trigger skill discovery, or the skill needs a better title/description`,
+            ),
+          );
+        }
       }
     }
 
@@ -215,12 +294,14 @@ async function runTestBody(
       headers: config.headers,
     });
 
-    const passed = verdict.score >= testCase.threshold;
+    const meetsThreshold = verdict.score >= testCase.threshold;
+    const passed = !signalError && meetsThreshold;
     if (passed) await removeDir(workDir);
 
     span.setAttributes({
       "agoda.eval.score": verdict.score,
       "agoda.eval.passed": passed,
+      ...(signalError ? { "agoda.eval.skill_signal_failure": signalError } : {}),
     });
 
     return {
@@ -231,6 +312,8 @@ async function runTestBody(
       reasoning: verdict.reasoning,
       durationMs: Date.now() - start,
       category: testCase.category,
+      ...(skillSignals ? { skillSignals } : {}),
+      ...(signalError ? { error: signalError } : {}),
     };
   } catch (err) {
     return {
@@ -253,10 +336,19 @@ export function printResult(result: TestResult) {
 
   console.log(`  ${icon} ${result.name}  ${score} (threshold: ${result.threshold}%)  ${time}`);
 
+  if (result.skillSignals) {
+    const regParts = result.skillSignals.registrations.map(
+      (r) => `${r.registered ? chalk.green("✓") : chalk.red("✗")} ${r.skill}`,
+    );
+    const invokedMark = result.skillSignals.anyInvoked ? chalk.green("✓") : chalk.red("✗");
+    console.log(chalk.dim(`    skill registered: ${regParts.join(", ")}`));
+    console.log(chalk.dim(`    skill invoked:    ${invokedMark}`));
+  }
+
   if (result.reasoning) {
     console.log(chalk.dim(`    ${result.reasoning}`));
   }
-  if (result.error && result.score === 0) {
+  if (result.error && (!result.passed || result.score === 0)) {
     console.log(chalk.red(`    Error: ${result.error}`));
   }
   console.log();
@@ -272,7 +364,10 @@ export function printSummary(results: TestResult[]) {
   if (failed > 0) {
     console.log(chalk.red.bold("\nFailed:"));
     for (const r of results.filter((r) => !r.passed)) {
-      console.log(chalk.red(`  ✗ ${r.name} (${r.score}% < ${r.threshold}%)`));
+      const reason = r.skillSignals && describeOpenCodeSkillSignalFailure(r.skillSignals)
+        ? chalk.red(" [skill-signal failure]")
+        : "";
+      console.log(chalk.red(`  ✗ ${r.name} (${r.score}% < ${r.threshold}%)${reason}`));
     }
   }
   console.log();
