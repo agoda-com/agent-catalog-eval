@@ -57,7 +57,7 @@ export function skillsDirForAgent(agent: AgentType): string {
   }
 }
 
-async function placeSkill(
+export async function placeSkill(
   workDir: string,
   agent: AgentType,
   skillName: string,

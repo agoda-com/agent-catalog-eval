@@ -19,6 +19,7 @@ export { detectCiContext } from "./ci.js";
 export { findRepoRoot } from "./repo-root.js";
 export {
   runAgent,
+  placeSkill,
   buildOtelEnv,
   buildTraceContextEnv,
   skillsDirForAgent,
