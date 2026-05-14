@@ -28,6 +28,34 @@ agent-catalog-eval tests/e2e             # Run cases hiding in ./tests/e2e
 agent-catalog-eval ./skills --filter ioc # Only run cases with "ioc" in the name (for when you're feeling specific)
 ```
 
+### Routing eval mode (MVP)
+
+You can run deterministic routing checks from routing cases + observed tool calls:
+
+```bash
+agent-catalog-eval route ./routing-cases ./observed.jsonl
+```
+
+- `routing-cases`: directory tree containing `eval.yaml` files with `mode: routing`
+- `observed.jsonl`: newline-delimited JSON with fields:
+  - `caseId` (matching the case folder path relative to cases root)
+  - `tool` (the invoked skill/tool name)
+
+Routing case shape (exactly one expectation type required):
+
+```yaml
+mode: routing
+prompt: |
+  Refactor this controller to use constructor injection.
+expected_skill: csharp-ioc-refactor
+# expected_any_of: [csharp-ioc-refactor, di-cleanup]
+# expected_none: true
+forbidden_skills: [vite-migration]
+```
+
+This mode is deterministic (no LLM judge) and returns non-zero on failures.
+
+
 `cases-dir` is a **positional argument**, much like `vitest path/to/tests` or `jest src`. It defaults to your current working directory (`process.cwd()`). Any folder inside `cases-dir` that has an `eval.yaml` is officially a test case. (Don't worry, we automatically ignore the boring stuff like `node_modules`, `src`, `dist`, `.git`, and `output`).
 
 ## Test Case Layout: Anatomy of an Exam 📝
