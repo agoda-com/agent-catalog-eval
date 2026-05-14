@@ -2,30 +2,20 @@ import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "./cli-parser.js";
 
 describe("parseCliArgs", () => {
-  const ctx = { cwd: process.cwd(), env: process.env };
+  const ctx = { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "x" } };
 
-  it("parses default eval mode", () => {
+  it("returns config on default args", () => {
     const r = parseCliArgs([], ctx);
-    expect(r.kind).toBe("ok");
-    if (r.kind === "ok") {
-      expect(r.options.mode).toBe("eval");
-    }
+    expect(r.kind).toBe("config");
   });
 
-  it("parses route mode", () => {
-    const r = parseCliArgs(["route", "./cases", "./observed.jsonl"], ctx);
-    expect(r.kind).toBe("ok");
-    if (r.kind === "ok") {
-      expect(r.options.mode).toBe("route");
-      if (r.options.mode === "route") {
-        expect(r.options.casesDir).toBe("./cases");
-        expect(r.options.observedJsonl).toBe("./observed.jsonl");
-      }
-    }
+  it("returns help for --help", () => {
+    const r = parseCliArgs(["--help"], ctx);
+    expect(r.kind).toBe("help");
   });
 
-  it("errors on invalid route args", () => {
-    const r = parseCliArgs(["route", "./cases"], ctx);
+  it("returns error on unknown arg", () => {
+    const r = parseCliArgs(["--does-not-exist"], ctx);
     expect(r.kind).toBe("error");
   });
 });

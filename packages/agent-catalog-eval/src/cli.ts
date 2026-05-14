@@ -21,7 +21,18 @@ async function main(): Promise<number> {
 }
 
 async function runMain(): Promise<number> {
-  const result = parseCliArgs(process.argv.slice(2), {
+  const args = process.argv.slice(2);
+  if (args[0] === "route") {
+    const casesDir = args[1];
+    const observedJsonl = args[2];
+    if (!casesDir || !observedJsonl) {
+      console.error("Usage: agent-catalog-eval route <casesDir> <observed.jsonl>");
+      return 2;
+    }
+    return runRouteEval(casesDir, observedJsonl);
+  }
+
+  const result = parseCliArgs(args, {
     cwd: process.cwd(),
     env: process.env,
   });
@@ -33,7 +44,7 @@ async function runMain(): Promise<number> {
 
   if (result.kind === "error") {
     console.error(`Error: ${result.message}`);
-    return 1;
+    return 2;
   }
 
   if (result.kind === "list-categories") {
