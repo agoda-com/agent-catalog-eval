@@ -13,7 +13,9 @@ type RouteCase = {
 
 type ObservedCall = {
   caseId: string;
-  tool: string;
+  tool?: string;
+  visibleTools?: string[];
+  rationale?: string;
 };
 
 type CaseResult = {
@@ -21,6 +23,8 @@ type CaseResult = {
   passed: boolean;
   reason?: string;
   observed: string[];
+  visibleTools?: string[];
+  rationale?: string;
   expected: {
     expected_skill?: string;
     expected_any_of?: string[];
@@ -67,18 +71,37 @@ async function loadCases(casesDir: string): Promise<RouteCase[]> {
   return cases;
 }
 
-async function loadObserved(jsonlPath: string): Promise<Map<string, string[]>> {
+async function loadObserved(jsonlPath: string): Promise<{
+  toolsByCase: Map<string, string[]>;
+  visibleByCase: Map<string, string[]>;
+  rationaleByCase: Map<string, string>;
+}> {
   const txt = await fs.readFile(jsonlPath, "utf8");
-  const map = new Map<string, string[]>();
+  const toolsByCase = new Map<string, string[]>();
+  const visibleByCase = new Map<string, string[]>();
+  const rationaleByCase = new Map<string, string>();
+
   for (const line of txt.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const row = JSON.parse(line) as ObservedCall;
-    if (!row.caseId || !row.tool) continue;
-    const arr = map.get(row.caseId) ?? [];
-    arr.push(row.tool);
-    map.set(row.caseId, arr);
+    if (!row.caseId) continue;
+
+    if (row.tool) {
+      const arr = toolsByCase.get(row.caseId) ?? [];
+      arr.push(row.tool);
+      toolsByCase.set(row.caseId, arr);
+    }
+
+    if (Array.isArray(row.visibleTools) && row.visibleTools.length > 0) {
+      visibleByCase.set(row.caseId, row.visibleTools);
+    }
+
+    if (row.rationale && row.rationale.trim()) {
+      rationaleByCase.set(row.caseId, row.rationale.trim());
+    }
   }
-  return map;
+
+  return { toolsByCase, visibleByCase, rationaleByCase };
 }
 
 function score(c: RouteCase, observed: string[]): { passed: boolean; reason?: string } {
@@ -122,19 +145,35 @@ function toMarkdown(results: CaseResult[], passed: number, total: number): strin
   for (const r of results) {
     lines.push(`| \`${r.caseId}\` | ${r.passed ? "✅ pass" : "❌ fail"} | ${r.reason ?? ""} | ${r.observed.join(", ") || "(none)"} |`);
   }
-  lines.push("");
+
+  const failures = results.filter((r) => !r.passed);
+  if (failures.length > 0) {
+    lines.push("");
+    lines.push("## Failure Diagnostics");
+    lines.push("");
+    for (const f of failures) {
+      lines.push(`### ${f.caseId}`);
+      lines.push(`- Reason: ${f.reason ?? "unknown"}`);
+      lines.push(`- Expected: ${JSON.stringify(f.expected)}`);
+      lines.push(`- Observed: ${f.observed.length ? f.observed.join(", ") : "(none)"}`);
+      if (f.visibleTools?.length) lines.push(`- Visible tools: ${f.visibleTools.join(", ")}`);
+      if (f.rationale) lines.push(`- Agent rationale: ${f.rationale}`);
+      lines.push("");
+    }
+  }
+
   return lines.join("\n");
 }
 
 export async function runRouteEval(casesDir: string, observedJsonl: string): Promise<number> {
   const cases = await loadCases(casesDir);
-  const observedMap = await loadObserved(observedJsonl);
+  const { toolsByCase, visibleByCase, rationaleByCase } = await loadObserved(observedJsonl);
 
   let failed = 0;
   const results: CaseResult[] = [];
 
   for (const c of cases) {
-    const observed = observedMap.get(c.id) ?? [];
+    const observed = toolsByCase.get(c.id) ?? [];
     const s = score(c, observed);
 
     const row: CaseResult = {
@@ -142,6 +181,8 @@ export async function runRouteEval(casesDir: string, observedJsonl: string): Pro
       passed: s.passed,
       reason: s.reason,
       observed,
+      visibleTools: visibleByCase.get(c.id),
+      rationale: rationaleByCase.get(c.id),
       expected: {
         expected_skill: c.expected_skill,
         expected_any_of: c.expected_any_of,
