@@ -1,5 +1,6 @@
 import { parseCliArgs } from "./cli-parser.js";
 import { discoverTests, getCategories, runAll } from "./runner.js";
+import { runRouteEval } from "./route-eval.js";
 import { reportMetrics } from "./telemetry.js";
 import { initTracing } from "./tracing.js";
 
@@ -20,7 +21,19 @@ async function main(): Promise<number> {
 }
 
 async function runMain(): Promise<number> {
-  const result = parseCliArgs(process.argv.slice(2), {
+  const args = process.argv.slice(2);
+
+  if (args[0] === "route") {
+    const casesDir = args[1];
+    const observedJsonl = args[2];
+    if (!casesDir || !observedJsonl) {
+      console.error("Usage: agent-catalog-eval route <casesDir> <observed.jsonl>");
+      return 1;
+    }
+    return runRouteEval(casesDir, observedJsonl);
+  }
+
+  const result = parseCliArgs(args, {
     cwd: process.cwd(),
     env: process.env,
   });
