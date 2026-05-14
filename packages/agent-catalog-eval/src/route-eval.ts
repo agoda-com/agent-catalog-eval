@@ -16,6 +16,19 @@ type ObservedCall = {
   tool: string;
 };
 
+type CaseResult = {
+  caseId: string;
+  passed: boolean;
+  reason?: string;
+  observed: string[];
+  expected: {
+    expected_skill?: string;
+    expected_any_of?: string[];
+    expected_none?: boolean;
+    forbidden_skills?: string[];
+  };
+};
+
 async function walk(dir: string): Promise<string[]> {
   const out: string[] = [];
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -98,14 +111,46 @@ function score(c: RouteCase, observed: string[]): { passed: boolean; reason?: st
   return { passed: false, reason: "invalid case" };
 }
 
+function toMarkdown(results: CaseResult[], passed: number, total: number): string {
+  const lines: string[] = [];
+  lines.push(`# Route Eval Report`);
+  lines.push("");
+  lines.push(`- Passed: **${passed}/${total}**`);
+  lines.push("");
+  lines.push(`| Case | Result | Reason | Observed |`);
+  lines.push(`|---|---|---|---|`);
+  for (const r of results) {
+    lines.push(`| \`${r.caseId}\` | ${r.passed ? "✅ pass" : "❌ fail"} | ${r.reason ?? ""} | ${r.observed.join(", ") || "(none)"} |`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 export async function runRouteEval(casesDir: string, observedJsonl: string): Promise<number> {
   const cases = await loadCases(casesDir);
   const observedMap = await loadObserved(observedJsonl);
 
   let failed = 0;
+  const results: CaseResult[] = [];
+
   for (const c of cases) {
     const observed = observedMap.get(c.id) ?? [];
     const s = score(c, observed);
+
+    const row: CaseResult = {
+      caseId: c.id,
+      passed: s.passed,
+      reason: s.reason,
+      observed,
+      expected: {
+        expected_skill: c.expected_skill,
+        expected_any_of: c.expected_any_of,
+        expected_none: c.expected_none,
+        forbidden_skills: c.forbidden_skills,
+      },
+    };
+    results.push(row);
+
     if (s.passed) {
       console.log(`✅ ${c.id}`);
     } else {
@@ -114,6 +159,18 @@ export async function runRouteEval(casesDir: string, observedJsonl: string): Pro
     }
   }
 
-  console.log(`\nRoute eval complete: ${cases.length - failed}/${cases.length} passed`);
+  const passed = cases.length - failed;
+  console.log(`\nRoute eval complete: ${passed}/${cases.length} passed`);
+
+  const outDir = path.join(casesDir, ".route-eval");
+  await fs.mkdir(outDir, { recursive: true });
+  await fs.writeFile(
+    path.join(outDir, "results.json"),
+    JSON.stringify({ generatedAt: new Date().toISOString(), total: cases.length, passed, failed, results }, null, 2),
+    "utf8",
+  );
+  await fs.writeFile(path.join(outDir, "report.md"), toMarkdown(results, passed, cases.length), "utf8");
+  console.log(`Reports written to ${outDir}`);
+
   return failed === 0 ? 0 : 1;
 }

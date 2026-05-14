@@ -13,16 +13,15 @@ async function setupCase(dir: string, name: string, yaml: string) {
 describe("route eval", () => {
   it("passes expected_skill when observed matches", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "route-eval-"));
-    await setupCase(
-      root,
-      "case-a",
-      `mode: routing\nprompt: hi\nexpected_skill: skill.a\n`,
-    );
+    await setupCase(root, "case-a", `mode: routing\nprompt: hi\nexpected_skill: skill.a\n`);
     const observed = path.join(root, "observed.jsonl");
     await fs.writeFile(observed, JSON.stringify({ caseId: "case-a", tool: "skill.a" }) + "\n", "utf8");
 
     const code = await runRouteEval(root, observed);
     expect(code).toBe(0);
+
+    const report = JSON.parse(await fs.readFile(path.join(root, ".route-eval", "results.json"), "utf8"));
+    expect(report.passed).toBe(1);
   });
 
   it("fails expected_none when any tool fires", async () => {

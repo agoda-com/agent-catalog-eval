@@ -55,6 +55,10 @@ forbidden_skills: [vite-migration]
 
 This mode is deterministic (no LLM judge) and returns non-zero on failures.
 
+It also writes reports under `./<casesDir>/.route-eval/`:
+- `results.json` (machine-readable)
+- `report.md` (human summary)
+
 
 `cases-dir` is a **positional argument**, much like `vitest path/to/tests` or `jest src`. It defaults to your current working directory (`process.cwd()`). Any folder inside `cases-dir` that has an `eval.yaml` is officially a test case. (Don't worry, we automatically ignore the boring stuff like `node_modules`, `src`, `dist`, `.git`, and `output`).
 
