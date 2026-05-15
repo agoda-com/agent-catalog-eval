@@ -30,30 +30,67 @@ agent-catalog-eval ./skills --filter ioc # Only run cases with "ioc" in the name
 
 ### Routing eval mode
 
-Deterministic routing checks: given a directory of routing cases and a JSONL log of
-observed tool calls, score whether the routing decision was correct.
+Routing eval checks **which skill the agent picked** for a given prompt, deterministically.
+Two modes:
+
+#### End-to-end against an MCP-hosted catalog (recommended)
+
+```bash
+agent-catalog-eval route ./routing-cases --upstream-mcp https://skills.example/mcp
+```
+
+Per case, the harness:
+
+1. Spawns OpenCode in a fresh per-case workdir under `<output-dir>/<caseId>/`.
+2. Writes an `opencode.json` that registers a stdio MCP server pointing at the
+   bundled proxy with `--case-id` baked in.
+3. The proxy connects to `--upstream-mcp` (Streamable HTTP, SSE fallback) and
+   forwards every `tools/list` and `tools/call` from OpenCode to it, while teeing
+   each request to the per-case `observed.jsonl` (`tools/list` rows include each
+   visible tool's name **and description** so the failure report can diff them).
+4. After the agent exits or hits `--timeout`, the scorer reads the JSONL and the
+   diagnostic writer renders `report.md` with the prompt, the visible tools, the
+   tool(s) the agent actually called, and — when the agent picked the wrong
+   skill — a word-level diff between the expected and the called skill's
+   description.
+5. A cumulative `<output-dir>/summary.json` lists every case for CI consumption.
+
+Currently OpenCode is the only wired agent. Cursor and Claude Code adapters
+will land in follow-up PRs.
+
+#### Score-only mode (replay / debug)
 
 ```bash
 agent-catalog-eval route ./routing-cases ./observed.jsonl
-agent-catalog-eval route ./routing-cases ./observed.jsonl --filter ioc
-agent-catalog-eval route ./routing-cases ./observed.jsonl --dry-run
 ```
 
-> **Scope today.** This subcommand is the *scorer* + report writer. The harness does
-> not yet spawn the agent or run a FastMCP observer proxy — you bring your own
-> `observed.jsonl` and the scorer correlates it to cases. The proxy + agent invocation
-> path is tracked in [#12](https://github.com/agoda-com/agent-catalog-eval/issues/12).
+Skips the agent invocation and grades a pre-existing observation log. Useful when
+you've captured observations from a different harness and just want the deterministic
+verdict + reports.
+
+#### Common flags
+
+- `--filter <substring>` — only score cases whose ID contains the substring
+- `--dry-run` — list discovered cases (with their expectation) and exit
+- `--output-dir <path>` — where per-case workdirs and reports are written
+  (default: `<casesDir>/.route-eval`)
+- `--timeout <seconds>` — per-case agent execution timeout (e2e mode only)
+- `--worker-model <name>` — model passed to OpenCode (e2e mode only)
 
 #### Inputs
 
 - `cases-dir`: directory tree of `eval.yaml` files with `mode: routing`. Each
   `eval.yaml`'s parent directory is a case. The case ID is the POSIX path of that
   directory relative to `cases-dir` (no leading `./`, no trailing `/`).
-- `observed.jsonl`: newline-delimited JSON with one observation per line:
+- `observed.jsonl` (score-only mode, or as produced by the proxy): newline-delimited
+  JSON with one observation per line:
   - `caseId` (string, required) — must match the case ID derived from the eval.yaml path
   - `tool` (string, optional) — the invoked skill/tool name
-  - `visibleTools` (string[], optional) — the tools the agent could see at decision time
+  - `visibleTools` (optional) — `string[]` or `Array<{ name: string, description?: string }>`
+    (the proxy writes the latter so the diagnostic report can diff descriptions)
   - `rationale` (string, optional) — the agent's reasoning, surfaced in failure reports
+  - `type` (string, optional) — `"tools/list"` or `"tools/call"` (proxy-emitted; ignored
+    by the scorer, which keys off `tool` and `visibleTools`)
 
 If any line fails to parse or violates the schema, the eval exits **2** with the
 offending line numbers — no records are silently dropped.
@@ -85,7 +122,17 @@ the full observed list so you can fix the skill descriptions.
 
 #### Outputs
 
-Reports are written under `<casesDir>/.route-eval/`:
+End-to-end mode (under `<output-dir>`, default `<casesDir>/.route-eval/`):
+
+- `summary.json` — `{ generatedAt, upstreamMcp, total, passed, failed,
+  cases: [{ caseId, passed, reason, expected, observed, durationMs, reportPath }] }`
+- `<caseId>/observed.jsonl` — raw proxy log
+- `<caseId>/report.md` — per-case diagnostic markdown (prompt, visible tools,
+  called tool, description diff)
+- `<caseId>/agent.log` — agent stdout / stderr / exit info
+- `<caseId>/opencode.json` — the per-case OpenCode config that registered the proxy
+
+Score-only mode (under `<casesDir>/.route-eval/`):
 
 - `results.json` — `{ generatedAt, total, passed, failed, results: [{ caseId, passed,
   reason, observed, visibleTools, rationale, expected }] }`
