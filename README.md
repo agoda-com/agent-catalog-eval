@@ -28,6 +28,123 @@ agent-catalog-eval tests/e2e             # Run cases hiding in ./tests/e2e
 agent-catalog-eval ./skills --filter ioc # Only run cases with "ioc" in the name (for when you're feeling specific)
 ```
 
+### Routing eval mode
+
+Routing eval checks **which skill the agent picked** for a given prompt, deterministically.
+Two modes:
+
+#### End-to-end against an MCP-hosted catalog (recommended)
+
+```bash
+agent-catalog-eval route ./routing-cases --upstream-mcp https://skills.example/mcp
+```
+
+Per case, the harness:
+
+1. Spawns OpenCode in a fresh per-case workdir under `<output-dir>/<caseId>/`.
+2. Writes an `opencode.json` that registers a stdio MCP server pointing at the
+   bundled proxy with `--case-id` baked in.
+3. The proxy connects to `--upstream-mcp` (Streamable HTTP, SSE fallback) and
+   forwards every `tools/list` and `tools/call` from OpenCode to it, while teeing
+   each request to the per-case `observed.jsonl` (`tools/list` rows include each
+   visible tool's name **and description** so the failure report can diff them).
+4. After the agent exits or hits `--timeout`, the scorer reads the JSONL and the
+   diagnostic writer renders `report.md` with the prompt, the visible tools, the
+   tool(s) the agent actually called, and — when the agent picked the wrong
+   skill — a word-level diff between the expected and the called skill's
+   description.
+5. A cumulative `<output-dir>/summary.json` lists every case for CI consumption.
+
+Currently OpenCode is the only wired agent. Cursor and Claude Code adapters
+will land in follow-up PRs.
+
+#### Score-only mode (replay / debug)
+
+```bash
+agent-catalog-eval route ./routing-cases ./observed.jsonl
+```
+
+Skips the agent invocation and grades a pre-existing observation log. Useful when
+you've captured observations from a different harness and just want the deterministic
+verdict + reports.
+
+#### Common flags
+
+- `--filter <substring>` — only score cases whose ID contains the substring
+- `--dry-run` — list discovered cases (with their expectation) and exit
+- `--output-dir <path>` — where per-case workdirs and reports are written
+  (default: `<casesDir>/.route-eval`)
+- `--timeout <seconds>` — per-case agent execution timeout (e2e mode only)
+- `--worker-model <name>` — model passed to OpenCode (e2e mode only)
+
+#### Inputs
+
+- `cases-dir`: directory tree of `eval.yaml` files with `mode: routing`. Each
+  `eval.yaml`'s parent directory is a case. The case ID is the POSIX path of that
+  directory relative to `cases-dir` (no leading `./`, no trailing `/`).
+- `observed.jsonl` (score-only mode, or as produced by the proxy): newline-delimited
+  JSON with one observation per line:
+  - `caseId` (string, required) — must match the case ID derived from the eval.yaml path
+  - `tool` (string, optional) — the invoked skill/tool name
+  - `visibleTools` (optional) — `string[]` or `Array<{ name: string, description?: string }>`
+    (the proxy writes the latter so the diagnostic report can diff descriptions)
+  - `rationale` (string, optional) — the agent's reasoning, surfaced in failure reports
+  - `type` (string, optional) — `"tools/list"` or `"tools/call"` (proxy-emitted; ignored
+    by the scorer, which keys off `tool` and `visibleTools`)
+
+If any line fails to parse or violates the schema, the eval exits **2** with the
+offending line numbers — no records are silently dropped.
+
+#### Case schema
+
+Exactly one of `expected_skill`, `expected_any_of`, or `expected_none` is required.
+
+```yaml
+mode: routing
+prompt: |
+  Refactor this controller to use constructor injection.
+expected_skill: csharp-ioc-refactor
+# expected_any_of: [csharp-ioc-refactor, di-cleanup]
+# expected_none: true
+forbidden_skills: [vite-migration]
+notes: optional human note shown in the report
+```
+
+`forbidden_skills` (if present) takes precedence: a case fails if any forbidden
+skill fires, even when an expected skill also fires. Failure reasons always include
+the full observed list so you can fix the skill descriptions.
+
+#### Flags
+
+- `--filter <substring>`: only score cases whose ID contains the substring
+- `--dry-run`: list discovered cases (with their expectation) and exit; no
+  observation file is read
+
+#### Outputs
+
+End-to-end mode (under `<output-dir>`, default `<casesDir>/.route-eval/`):
+
+- `summary.json` — `{ generatedAt, upstreamMcp, total, passed, failed,
+  cases: [{ caseId, passed, reason, expected, observed, durationMs, reportPath }] }`
+- `<caseId>/observed.jsonl` — raw proxy log
+- `<caseId>/report.md` — per-case diagnostic markdown (prompt, visible tools,
+  called tool, description diff)
+- `<caseId>/agent.log` — agent stdout / stderr / exit info
+- `<caseId>/opencode.json` — the per-case OpenCode config that registered the proxy
+
+Score-only mode (under `<casesDir>/.route-eval/`):
+
+- `results.json` — `{ generatedAt, total, passed, failed, results: [{ caseId, passed,
+  reason, observed, visibleTools, rationale, expected }] }`
+- `report.md` — human-readable summary table plus a Failure Diagnostics section
+
+#### Exit codes
+
+- `0` — all cases passed
+- `1` — at least one case failed
+- `2` — usage error / unparseable cases / unparseable observation log
+
+
 `cases-dir` is a **positional argument**, much like `vitest path/to/tests` or `jest src`. It defaults to your current working directory (`process.cwd()`). Any folder inside `cases-dir` that has an `eval.yaml` is officially a test case. (Don't worry, we automatically ignore the boring stuff like `node_modules`, `src`, `dist`, `.git`, and `output`).
 
 ## Test Case Layout: Anatomy of an Exam 📝
