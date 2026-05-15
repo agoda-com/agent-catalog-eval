@@ -28,20 +28,39 @@ agent-catalog-eval tests/e2e             # Run cases hiding in ./tests/e2e
 agent-catalog-eval ./skills --filter ioc # Only run cases with "ioc" in the name (for when you're feeling specific)
 ```
 
-### Routing eval mode (MVP)
+### Routing eval mode
 
-You can run deterministic routing checks from routing cases + observed tool calls:
+Deterministic routing checks: given a directory of routing cases and a JSONL log of
+observed tool calls, score whether the routing decision was correct.
 
 ```bash
 agent-catalog-eval route ./routing-cases ./observed.jsonl
+agent-catalog-eval route ./routing-cases ./observed.jsonl --filter ioc
+agent-catalog-eval route ./routing-cases ./observed.jsonl --dry-run
 ```
 
-- `routing-cases`: directory tree containing `eval.yaml` files with `mode: routing`
-- `observed.jsonl`: newline-delimited JSON with fields:
-  - `caseId` (matching the case folder path relative to cases root)
-  - `tool` (the invoked skill/tool name)
+> **Scope today.** This subcommand is the *scorer* + report writer. The harness does
+> not yet spawn the agent or run a FastMCP observer proxy — you bring your own
+> `observed.jsonl` and the scorer correlates it to cases. The proxy + agent invocation
+> path is tracked in [#12](https://github.com/agoda-com/agent-catalog-eval/issues/12).
 
-Routing case shape (exactly one expectation type required):
+#### Inputs
+
+- `cases-dir`: directory tree of `eval.yaml` files with `mode: routing`. Each
+  `eval.yaml`'s parent directory is a case. The case ID is the POSIX path of that
+  directory relative to `cases-dir` (no leading `./`, no trailing `/`).
+- `observed.jsonl`: newline-delimited JSON with one observation per line:
+  - `caseId` (string, required) — must match the case ID derived from the eval.yaml path
+  - `tool` (string, optional) — the invoked skill/tool name
+  - `visibleTools` (string[], optional) — the tools the agent could see at decision time
+  - `rationale` (string, optional) — the agent's reasoning, surfaced in failure reports
+
+If any line fails to parse or violates the schema, the eval exits **2** with the
+offending line numbers — no records are silently dropped.
+
+#### Case schema
+
+Exactly one of `expected_skill`, `expected_any_of`, or `expected_none` is required.
 
 ```yaml
 mode: routing
@@ -51,13 +70,32 @@ expected_skill: csharp-ioc-refactor
 # expected_any_of: [csharp-ioc-refactor, di-cleanup]
 # expected_none: true
 forbidden_skills: [vite-migration]
+notes: optional human note shown in the report
 ```
 
-This mode is deterministic (no LLM judge) and returns non-zero on failures.
+`forbidden_skills` (if present) takes precedence: a case fails if any forbidden
+skill fires, even when an expected skill also fires. Failure reasons always include
+the full observed list so you can fix the skill descriptions.
 
-It also writes reports under `./<casesDir>/.route-eval/`:
-- `results.json` (machine-readable)
-- `report.md` (human summary)
+#### Flags
+
+- `--filter <substring>`: only score cases whose ID contains the substring
+- `--dry-run`: list discovered cases (with their expectation) and exit; no
+  observation file is read
+
+#### Outputs
+
+Reports are written under `<casesDir>/.route-eval/`:
+
+- `results.json` — `{ generatedAt, total, passed, failed, results: [{ caseId, passed,
+  reason, observed, visibleTools, rationale, expected }] }`
+- `report.md` — human-readable summary table plus a Failure Diagnostics section
+
+#### Exit codes
+
+- `0` — all cases passed
+- `1` — at least one case failed
+- `2` — usage error / unparseable cases / unparseable observation log
 
 
 `cases-dir` is a **positional argument**, much like `vitest path/to/tests` or `jest src`. It defaults to your current working directory (`process.cwd()`). Any folder inside `cases-dir` that has an `eval.yaml` is officially a test case. (Don't worry, we automatically ignore the boring stuff like `node_modules`, `src`, `dist`, `.git`, and `output`).
