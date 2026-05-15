@@ -62,5 +62,19 @@ export {
   DEFAULT_OTEL_SERVICE_NAME,
   type CliParseResult,
   type ListCategoriesResult,
+  type RouteResult,
   type ParseEnv,
 } from "./cli-parser.js";
+export {
+  runRouteEval,
+  loadCases,
+  loadObserved,
+  parseRouteCase,
+  caseIdFromPath,
+  score,
+  type RouteCase,
+  type RouteExpectation,
+  type ObservedCall,
+  type CaseResult,
+  type RouteEvalOptions,
+} from "./route-eval.js";
