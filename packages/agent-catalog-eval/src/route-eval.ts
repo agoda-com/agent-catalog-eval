@@ -157,6 +157,25 @@ export interface ObservedIndex {
   rationaleByCase: Map<string, string>;
 }
 
+/**
+ * Accept `visibleTools` as either `string[]` (for hand-rolled observation
+ * logs) or `Array<{ name: string; description?: string }>` (what the
+ * built-in proxy writes). Returns just the names — descriptions are
+ * recovered separately by the runner when it needs them for diffs.
+ */
+function extractVisibleToolNames(value: unknown, lineNo: number): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`line ${lineNo}: visibleTools must be an array`);
+  }
+  return value.map((entry, i) => {
+    if (typeof entry === "string") return entry;
+    if (isRecord(entry) && typeof entry.name === "string") return entry.name;
+    throw new Error(
+      `line ${lineNo}: visibleTools[${i}] must be a string or { name: string, description?: string }`,
+    );
+  });
+}
+
 function parseObservedRow(value: unknown, lineNo: number): ObservedCall {
   if (!isRecord(value)) {
     throw new Error(`line ${lineNo}: row must be a JSON object`);
@@ -172,10 +191,7 @@ function parseObservedRow(value: unknown, lineNo: number): ObservedCall {
     out.tool = value.tool;
   }
   if (value.visibleTools !== undefined) {
-    if (!isStringArray(value.visibleTools)) {
-      throw new Error(`line ${lineNo}: visibleTools must be an array of strings`);
-    }
-    out.visibleTools = value.visibleTools;
+    out.visibleTools = extractVisibleToolNames(value.visibleTools, lineNo);
   }
   if (value.rationale !== undefined) {
     if (typeof value.rationale !== "string") {

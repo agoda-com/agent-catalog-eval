@@ -28,13 +28,19 @@ export const HELP_TEXT = `agent-catalog-eval — run a coding agent against a ca
 
 Usage:
   agent-catalog-eval [cases-dir] [options]
+  agent-catalog-eval route <cases-dir> --upstream-mcp <url> [opts]
   agent-catalog-eval route <cases-dir> <observed.jsonl> [--filter <p>] [--dry-run]
 
 Subcommands:
-  route                      Deterministic routing eval. Scores observed tool
-                             calls (JSONL) against routing cases (eval.yaml
-                             with mode: routing). Honors --filter and
-                             --dry-run. Exit codes: 0 pass, 1 test failure,
+  route                      Routing eval against an MCP-hosted skill catalog.
+                             With --upstream-mcp <url>, spawns OpenCode per
+                             case behind a stdio MCP proxy that forwards every
+                             tools/list and tools/call to the upstream and
+                             tees observations to a per-case observed.jsonl.
+                             Without --upstream-mcp, runs in score-only mode
+                             against an externally-produced observed.jsonl.
+                             Honors --filter, --dry-run, --output-dir,
+                             --timeout. Exit codes: 0 pass, 1 test failure,
                              2 usage / load error.
 
 Arguments:
@@ -73,6 +79,9 @@ Options:
                                (default: $OTEL_EXPORTER_OTLP_PROTOCOL or ${DEFAULT_OTEL_PROTOCOL})
   --otel-service-name <name> service.name attribute on emitted spans
                                (default: $OTEL_SERVICE_NAME or ${DEFAULT_OTEL_SERVICE_NAME})
+  --upstream-mcp <url>       Route mode: upstream MCP server URL the proxy
+                               forwards to (Streamable HTTP, SSE fallback).
+                               Required for end-to-end route mode.
   --help, -h                 Show this help
 
 Environment:
@@ -124,12 +133,30 @@ export interface ListCategoriesResult {
 }
 
 /**
- * Returned for `route <casesDir> <observed.jsonl>`. The CLI dispatches this
- * to `runRouteEval`. Honors `--filter` and `--dry-run` (other flags are
- * irrelevant to the deterministic scorer and ignored).
+ * End-to-end routing eval: spawn OpenCode per case behind an MCP observer
+ * proxy that forwards to `upstreamMcp`. Produces per-case observed.jsonl,
+ * markdown reports, and a cumulative summary.json under `outputDir`.
  */
-export interface RouteResult {
-  kind: "route";
+export interface RouteRunResult {
+  kind: "route-run";
+  casesDir: string;
+  upstreamMcp: string;
+  outputDir: string;
+  timeoutMs: number;
+  filter?: string;
+  dryRun: boolean;
+  apiKey: string;
+  baseUrl: string;
+  workerModel: string;
+  headers: Record<string, string>;
+}
+
+/**
+ * Score-only mode: take an externally-produced observed.jsonl and grade it
+ * against routing cases. Useful for replay / debugging.
+ */
+export interface RouteScoreResult {
+  kind: "route-score";
   casesDir: string;
   observedJsonl: string;
   filter?: string;
@@ -141,7 +168,8 @@ export type CliParseResult =
   | HelpResult
   | ErrorResult
   | ListCategoriesResult
-  | RouteResult;
+  | RouteRunResult
+  | RouteScoreResult;
 
 export interface ParseEnv {
   cwd: string;
@@ -190,22 +218,84 @@ export function parseCliArgs(argv: string[], envCtx: ParseEnv): CliParseResult {
     otelEndpoint: raw["otel-endpoint"] as string | undefined,
     otelProtocol: raw["otel-protocol"] as string | undefined,
     otelServiceName: raw["otel-service-name"] as string | undefined,
+    upstreamMcp: raw["upstream-mcp"] as string | undefined,
   };
 
   if (v.help) return { kind: "help", text: HELP_TEXT };
 
   if (positionals[0] === "route") {
     const casesDirArg = positionals[1];
-    const observedArg = positionals[2];
-    if (positionals.length !== 3 || !casesDirArg || !observedArg) {
+    if (!casesDirArg) {
       return {
         kind: "error",
-        message: "Usage: agent-catalog-eval route <casesDir> <observed.jsonl>",
+        message:
+          "Usage: agent-catalog-eval route <casesDir> --upstream-mcp <url>\n   or: agent-catalog-eval route <casesDir> <observed.jsonl>",
+      };
+    }
+    const casesDir = resolve(envCtx.cwd, casesDirArg);
+
+    if (v.upstreamMcp) {
+      if (positionals.length > 2) {
+        return {
+          kind: "error",
+          message:
+            "Pass either --upstream-mcp <url> (e2e) or a positional <observed.jsonl> (score-only), not both.",
+        };
+      }
+
+      const apiKey = envCtx.env.OPENAI_API_KEY;
+      if (!apiKey && !v.dryRun) {
+        return {
+          kind: "error",
+          message: "OPENAI_API_KEY is required for route mode (the agent calls the LLM gateway).",
+        };
+      }
+
+      const timeoutSec = parseInt(v.timeout, 10);
+      if (isNaN(timeoutSec) || timeoutSec <= 0) {
+        return {
+          kind: "error",
+          message: `Invalid --timeout "${v.timeout}". Must be a positive integer (seconds).`,
+        };
+      }
+
+      let headers: Record<string, string>;
+      try {
+        headers = parseHeaders(v.header);
+      } catch (err) {
+        return { kind: "error", message: err instanceof Error ? err.message : String(err) };
+      }
+
+      const outputDir = v.outputDir
+        ? resolve(envCtx.cwd, v.outputDir)
+        : resolve(casesDir, ".route-eval");
+
+      return {
+        kind: "route-run",
+        casesDir,
+        upstreamMcp: v.upstreamMcp,
+        outputDir,
+        timeoutMs: timeoutSec * 1000,
+        filter: v.filter,
+        dryRun: v.dryRun,
+        apiKey: apiKey ?? "",
+        baseUrl: envCtx.env.OPENAI_BASE_URL ?? v.baseUrl ?? DEFAULT_BASE_URL,
+        workerModel: v.workerModel,
+        headers,
+      };
+    }
+
+    const observedArg = positionals[2];
+    if (positionals.length !== 3 || !observedArg) {
+      return {
+        kind: "error",
+        message:
+          "Usage: agent-catalog-eval route <casesDir> --upstream-mcp <url>\n   or: agent-catalog-eval route <casesDir> <observed.jsonl>",
       };
     }
     return {
-      kind: "route",
-      casesDir: resolve(envCtx.cwd, casesDirArg),
+      kind: "route-score",
+      casesDir,
       observedJsonl: resolve(envCtx.cwd, observedArg),
       filter: v.filter,
       dryRun: v.dryRun,
@@ -346,5 +436,6 @@ const OPTIONS = {
   "otel-endpoint": { type: "string" },
   "otel-protocol": { type: "string" },
   "otel-service-name": { type: "string" },
+  "upstream-mcp": { type: "string" },
   help: { type: "boolean", short: "h", default: false },
 } as const;

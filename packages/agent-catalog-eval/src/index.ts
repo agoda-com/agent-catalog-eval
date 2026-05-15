@@ -62,7 +62,8 @@ export {
   DEFAULT_OTEL_SERVICE_NAME,
   type CliParseResult,
   type ListCategoriesResult,
-  type RouteResult,
+  type RouteRunResult,
+  type RouteScoreResult,
   type ParseEnv,
 } from "./cli-parser.js";
 export {
@@ -78,3 +79,19 @@ export {
   type CaseResult,
   type RouteEvalOptions,
 } from "./route-eval.js";
+export { runRoute, type RouteRunOptions, type AgentExit } from "./route-runner.js";
+export {
+  runProxy,
+  runProxyCli,
+  connectUpstream,
+  type ProxyOptions,
+  type ProxyObservation,
+} from "./route-proxy.js";
+export {
+  renderCaseReport,
+  renderDescriptionDiff,
+  writeRunSummary,
+  type DiagnosticInputs,
+  type VisibleTool,
+  type RunSummary,
+} from "./route-report.js";
