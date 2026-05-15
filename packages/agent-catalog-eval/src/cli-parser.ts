@@ -28,6 +28,14 @@ export const HELP_TEXT = `agent-catalog-eval — run a coding agent against a ca
 
 Usage:
   agent-catalog-eval [cases-dir] [options]
+  agent-catalog-eval route <cases-dir> <observed.jsonl> [--filter <p>] [--dry-run]
+
+Subcommands:
+  route                      Deterministic routing eval. Scores observed tool
+                             calls (JSONL) against routing cases (eval.yaml
+                             with mode: routing). Honors --filter and
+                             --dry-run. Exit codes: 0 pass, 1 test failure,
+                             2 usage / load error.
 
 Arguments:
   [cases-dir]                Directory containing test cases (default: cwd).
@@ -115,7 +123,25 @@ export interface ListCategoriesResult {
   repoRoot: string;
 }
 
-export type CliParseResult = ParseResult | HelpResult | ErrorResult | ListCategoriesResult;
+/**
+ * Returned for `route <casesDir> <observed.jsonl>`. The CLI dispatches this
+ * to `runRouteEval`. Honors `--filter` and `--dry-run` (other flags are
+ * irrelevant to the deterministic scorer and ignored).
+ */
+export interface RouteResult {
+  kind: "route";
+  casesDir: string;
+  observedJsonl: string;
+  filter?: string;
+  dryRun: boolean;
+}
+
+export type CliParseResult =
+  | ParseResult
+  | HelpResult
+  | ErrorResult
+  | ListCategoriesResult
+  | RouteResult;
 
 export interface ParseEnv {
   cwd: string;
@@ -167,6 +193,24 @@ export function parseCliArgs(argv: string[], envCtx: ParseEnv): CliParseResult {
   };
 
   if (v.help) return { kind: "help", text: HELP_TEXT };
+
+  if (positionals[0] === "route") {
+    const casesDirArg = positionals[1];
+    const observedArg = positionals[2];
+    if (positionals.length !== 3 || !casesDirArg || !observedArg) {
+      return {
+        kind: "error",
+        message: "Usage: agent-catalog-eval route <casesDir> <observed.jsonl>",
+      };
+    }
+    return {
+      kind: "route",
+      casesDir: resolve(envCtx.cwd, casesDirArg),
+      observedJsonl: resolve(envCtx.cwd, observedArg),
+      filter: v.filter,
+      dryRun: v.dryRun,
+    };
+  }
 
   if (positionals.length > 1) {
     return {
