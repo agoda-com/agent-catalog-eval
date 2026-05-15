@@ -1,5 +1,50 @@
 # agoda-agent-catalog-eval
 
+## 0.6.0
+
+### Minor Changes
+
+- d9d821d: `route` mode now ships the runner half: end-to-end routing eval against an
+  MCP-hosted skill catalog, not just a scorer.
+  - `agent-catalog-eval route <casesDir> --upstream-mcp <url>` spawns OpenCode
+    per case behind a stdio MCP observer proxy. The proxy forwards every
+    `tools/list` and `tools/call` to `--upstream-mcp` (Streamable HTTP, SSE
+    fallback) and tees observations to a per-case `observed.jsonl`.
+  - Per case, the runner writes a per-case `opencode.json` that registers the
+    proxy as a stdio MCP server with the case ID baked in via `--case-id`, so
+    observations land in the right log without any session-correlation dance.
+  - After each agent exits / hits `--timeout`, the deterministic scorer runs
+    and a per-case `report.md` is written: prompt, visible tools (with
+    descriptions), called tool(s), and — when the agent picked the wrong skill
+    — a word-level diff between the expected and called skill descriptions.
+  - Cumulative `summary.json` for CI consumption.
+  - Score-only mode (`route <casesDir> <observed.jsonl>`) is preserved for
+    replay / debug.
+  - Hidden `__proxy` subcommand is the proxy entry; opencode.json invokes it
+    via stdio and it never writes to stdout (which would corrupt the JSON-RPC
+    stream).
+  - Public exports: `runRoute`, `runProxy`, `runProxyCli`, `bridgeProxy`,
+    `connectUpstream`, `renderCaseReport`, `renderDescriptionDiff`,
+    `writeRunSummary`, plus their input / output types.
+
+  V1 wires OpenCode only. Cursor and Claude Code adapters land in follow-up PRs.
+
+- d9d821d: Add `route` subcommand: a deterministic routing-eval scorer for `mode: routing`
+  cases against a JSONL log of observed tool calls.
+  - `agent-catalog-eval route <casesDir> <observed.jsonl>` plus `--filter` and `--dry-run`
+  - Exit codes: `0` pass, `1` test failure, `2` usage / unparseable input
+  - Loud failure with line numbers on malformed `observed.jsonl` (no silent record drops)
+  - Aggregated case schema validation (rejects multiple/zero `expected_*`, empty
+    `expected_any_of`, non-`true` `expected_none`)
+  - Failure reasons always include the full observed call list
+  - Writes `<casesDir>/.route-eval/results.json` and `report.md`
+  - Public exports: `runRouteEval`, `parseRouteCase`, `loadCases`, `loadObserved`,
+    `score`, `caseIdFromPath`, plus `RouteCase` / `RouteExpectation` /
+    `ObservedCall` / `CaseResult` / `RouteEvalOptions` types
+
+  This is the scorer + CLI hook foundation. The FastMCP observer proxy and agent
+  invocation that produce `observed.jsonl` end-to-end are still tracked in #12.
+
 ## 0.5.0
 
 ### Minor Changes
