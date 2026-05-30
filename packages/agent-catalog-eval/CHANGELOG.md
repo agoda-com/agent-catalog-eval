@@ -1,5 +1,11 @@
 # agoda-agent-catalog-eval
 
+## 0.6.1
+
+### Patch Changes
+
+- 23b7707: Exclude node_modules and binary files from the judge prompt
+
 ## 0.6.0
 
 ### Minor Changes
