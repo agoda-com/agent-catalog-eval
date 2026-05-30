@@ -71,7 +71,30 @@ CI runs the same four jobs in `.github/workflows/checks.yml`. Don't push and
 "let CI tell you" — it wastes a feedback cycle. If you only changed docs, you
 can skip `build` and `test`, but lint + types must still pass.
 
-### 2. NO BREAKING CHANGES
+### 2. Every code PR must include a changeset
+
+Any PR that changes the published package (`packages/agent-catalog-eval/`)
+**must** add a `.changeset/*.md` entry. Run `pnpm versioning` (or
+`pnpm changeset`), pick the bump type, and commit the generated file with your
+PR.
+
+Pick the bump per [rule 3](#3-no-breaking-changes): `patch` for fixes, `minor`
+for additive changes, `major` for breaking ones.
+
+**Why this is non-negotiable:** `changeset.yml` only opens a "Version Packages"
+PR when pending changesets exist. A PR merged to `main` _without_ a changeset
+produces a green run that silently does nothing — the logs read
+`No changesets found` and the version is never bumped. The fix is a follow-up
+changeset PR, so just include one up front.
+
+Docs-only / CI-only PRs that don't touch the package source don't need a
+changeset.
+
+The `changeset` job in `checks.yml` enforces this: it fails any PR that
+touches `packages/agent-catalog-eval/` without adding a `.changeset/*.md`
+entry.
+
+### 3. NO BREAKING CHANGES
 
 Treat the following as a hard constraint:
 
@@ -96,14 +119,14 @@ If a change feels unavoidable:
 Additive changes (new flag with a sensible default, new exported helper, new
 optional field on payload) are fine and should be marked `minor`.
 
-### 3. Test what's in this repo, not what's downstream
+### 4. Test what's in this repo, not what's downstream
 
 Per the project rule: don't write tests for the openai SDK, the yaml parser,
 or the spawned agent binaries — they have their own tests. Cover our own
 logic (parsing, payload shape, file walking, CI detection, runner control
 flow). Mock at seams (`OpenAI` client, `child_process.spawn`).
 
-### 4. Style and dependencies
+### 5. Style and dependencies
 
 - Prettier handles formatting — `pnpm format` before opening a PR.
 - ESLint flat config (`eslint.config.js`) is the source of truth for lint
@@ -114,7 +137,7 @@ flow). Mock at seams (`OpenAI` client, `child_process.spawn`).
 - Keep `chalk` and `yaml` as `noExternal` in `tsup.config.ts` — both are
   ESM-only and bundling is what makes the cjs bin actually run.
 
-### 5. Don't leak internal information
+### 6. Don't leak internal information
 
 This repo and the `agoda-agent-catalog-eval` npm package are public. Code,
 docs, commit messages, PR descriptions, and changesets are world-readable.

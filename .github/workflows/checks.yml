@@ -65,3 +65,32 @@ jobs:
           cache-key: ci-lint
       - name: lint
         run: pnpm lint
+
+  changeset:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: require changeset when the package changes
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          changed="$(git diff --name-only "origin/$BASE_REF...HEAD")"
+
+          if ! echo "$changed" | grep -q '^packages/agent-catalog-eval/'; then
+            echo "No changes to the published package; changeset not required."
+            exit 0
+          fi
+
+          new_changesets="$(echo "$changed" | grep -E '^\.changeset/[^/]+\.md$' | grep -vE '^\.changeset/README\.md$' || true)"
+          if [ -z "$new_changesets" ]; then
+            echo "::error::This PR changes packages/agent-catalog-eval/ but adds no changeset. Run 'pnpm changeset', pick a bump type, and commit the generated .changeset/*.md file. See AGENTS.md rule 2."
+            exit 1
+          fi
+
+          echo "Found changeset:"
+          echo "$new_changesets"
