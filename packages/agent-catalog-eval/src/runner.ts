@@ -20,6 +20,17 @@ import { withSpan } from "./tracing.js";
 
 const SKIP_DIRS = new Set(["node_modules", "src", "dist", ".git", "output"]);
 
+/**
+ * Directories to skip when collecting the agent's output for the judge.
+ * Unlike `SKIP_DIRS` (used by test discovery), this list intentionally does
+ * NOT include `src` — agent-produced `src/` files are part of the deliverable.
+ * Inlining `node_modules` blows the judge context window (see issue #15).
+ */
+const AGENT_OUTPUT_SKIP_DIRS = new Set(["node_modules", "dist", ".git", "output"]);
+
+/** Per-file cap on bytes inlined into the judge prompt. */
+const MAX_AGENT_FILE_BYTES = 64 * 1024;
+
 const TRACE_DIR = ".agent-trace";
 
 export async function discoverTests(casesDir: string, repoRoot: string): Promise<TestCase[]> {
@@ -274,7 +285,12 @@ async function runTestBody(
       }
     }
 
-    const agentFiles = (await collectFiles(workDir)).filter(
+    const agentFiles = (
+      await collectFiles(workDir, {
+        skipDirs: AGENT_OUTPUT_SKIP_DIRS,
+        maxFileBytes: MAX_AGENT_FILE_BYTES,
+      })
+    ).filter(
       (f) =>
         !f.path.startsWith(".cursor") &&
         !f.path.startsWith(".claude") &&

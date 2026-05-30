@@ -43,6 +43,59 @@ describe("collectFiles", () => {
   it("returns an empty array for an empty directory", async () => {
     expect(await collectFiles(tmp)).toEqual([]);
   });
+
+  it("skips directories listed in `skipDirs` (e.g. node_modules)", async () => {
+    await mkdir(join(tmp, "node_modules", "pptxgenjs"), { recursive: true });
+    await mkdir(join(tmp, "src"), { recursive: true });
+    await writeFile(join(tmp, "node_modules", "pptxgenjs", "index.js"), "module.exports = {}");
+    await writeFile(join(tmp, "src", "real.ts"), "export {}");
+    await writeFile(join(tmp, "package.json"), "{}");
+
+    const files = await collectFiles(tmp, { skipDirs: new Set(["node_modules"]) });
+
+    expect(files.map((f) => f.path)).toEqual(["package.json", "src/real.ts"]);
+  });
+
+  it("replaces binary-extension files with a placeholder instead of reading their bytes", async () => {
+    const bin = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00]); // PK\x03\x04...
+    await writeFile(join(tmp, "deck.pptx"), bin);
+    await writeFile(join(tmp, "notes.md"), "# notes");
+
+    const files = await collectFiles(tmp);
+
+    const pptx = files.find((f) => f.path === "deck.pptx");
+    expect(pptx?.content).toMatch(/^<binary file omitted: \d+ B>$/);
+    expect(files.find((f) => f.path === "notes.md")?.content).toBe("# notes");
+  });
+
+  it("detects binary content by NUL-byte sniffing even without a known extension", async () => {
+    const buf = Buffer.concat([Buffer.from("hi"), Buffer.from([0x00]), Buffer.from("there")]);
+    await writeFile(join(tmp, "blob"), buf);
+
+    const [file] = await collectFiles(tmp);
+
+    expect(file?.content).toMatch(/^<binary file omitted: \d+ B>$/);
+  });
+
+  it("truncates oversized text files to `maxFileBytes` and appends a truncation marker", async () => {
+    const big = "a".repeat(2000);
+    await writeFile(join(tmp, "big.txt"), big);
+
+    const [file] = await collectFiles(tmp, { maxFileBytes: 100 });
+
+    expect(file?.content.startsWith("a".repeat(100))).toBe(true);
+    expect(file?.content).toContain("<truncated:");
+    expect(file?.content).toContain("100 B shown");
+    expect(file?.content.length).toBeLessThan(big.length);
+  });
+
+  it("leaves small text files unchanged when `maxFileBytes` is set", async () => {
+    await writeFile(join(tmp, "small.txt"), "ok");
+
+    const [file] = await collectFiles(tmp, { maxFileBytes: 100 });
+
+    expect(file?.content).toBe("ok");
+  });
 });
 
 describe("formatFiles", () => {
