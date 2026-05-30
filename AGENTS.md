@@ -90,6 +90,10 @@ changeset PR, so just include one up front.
 Docs-only / CI-only PRs that don't touch the package source don't need a
 changeset.
 
+The `changeset` job in `checks.yml` enforces this: it fails any PR that
+touches `packages/agent-catalog-eval/` without adding a `.changeset/*.md`
+entry.
+
 ### 3. NO BREAKING CHANGES
 
 Treat the following as a hard constraint:
