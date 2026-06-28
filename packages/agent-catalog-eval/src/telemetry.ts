@@ -15,16 +15,11 @@ export const DEFAULT_METRICS_URL = "http://compilation-metrics/api/v1/skill-eval
  * request, so consumers can identify themselves to their metrics service.
  */
 
-export function buildPayload(
-  results: TestResult[],
-  config: RunnerConfig,
-): TelemetryPayload {
+export function buildPayload(results: TestResult[], config: RunnerConfig): TelemetryPayload {
   const passed = results.filter((r) => r.passed).length;
   const totalDuration = results.reduce((sum, r) => sum + r.durationMs, 0);
   const avgScore =
-    results.length > 0
-      ? results.reduce((sum, r) => sum + r.score, 0) / results.length
-      : 0;
+    results.length > 0 ? results.reduce((sum, r) => sum + r.score, 0) / results.length : 0;
 
   return {
     project: config.ciContext.project,
@@ -45,6 +40,7 @@ export function buildPayload(
     },
     results: results.map((r) => ({
       test_name: r.name,
+      skill_name: r.skillName ?? null,
       passed: r.passed,
       score: r.score,
       threshold: r.threshold,
@@ -55,10 +51,7 @@ export function buildPayload(
   };
 }
 
-export async function reportMetrics(
-  results: TestResult[],
-  config: RunnerConfig,
-): Promise<void> {
+export async function reportMetrics(results: TestResult[], config: RunnerConfig): Promise<void> {
   const payload = buildPayload(results, config);
 
   console.log(`Sending telemetry to ${config.metricsUrl}...`);
@@ -74,9 +67,7 @@ export async function reportMetrics(
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    console.error(
-      `Warning: metrics endpoint returned ${response.status}: ${body}`,
-    );
+    console.error(`Warning: metrics endpoint returned ${response.status}: ${body}`);
     return;
   }
 

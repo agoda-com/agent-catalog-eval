@@ -203,13 +203,13 @@ async function runTestBody(
 ): Promise<TestResult> {
   const start = Date.now();
   const label = testCase.name.replace(/\//g, "-");
+  const skillName = basename(dirname(testCase.skillPath));
   const workDir = await createWorkDir(config.outputDir, label);
 
   try {
     await copyDir(testCase.beforeDir, workDir);
 
     const skillContent = await readFile(testCase.skillPath, "utf-8");
-    const skillName = basename(dirname(testCase.skillPath));
 
     const additionalSkills = await Promise.all(
       testCase.additionalSkillPaths.map(async (p) => ({
@@ -322,6 +322,7 @@ async function runTestBody(
 
     return {
       name: testCase.name,
+      skillName,
       passed,
       score: verdict.score,
       threshold: testCase.threshold,
@@ -334,6 +335,7 @@ async function runTestBody(
   } catch (err) {
     return {
       name: testCase.name,
+      skillName,
       passed: false,
       score: 0,
       threshold: testCase.threshold,

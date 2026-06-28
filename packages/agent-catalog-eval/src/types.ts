@@ -60,6 +60,8 @@ export interface OpenCodeSkillSignals {
 
 export interface TestResult {
   name: string;
+  /** Primary skill under evaluation for this test, when known. */
+  skillName?: string;
   passed: boolean;
   score: number;
   threshold: number;
@@ -131,6 +133,11 @@ export interface RunnerConfig {
 
 export interface TelemetryTestResult {
   test_name: string;
+  /**
+   * Primary skill under evaluation for this result. Optional to keep the
+   * exported payload type additive for consumers constructing it themselves.
+   */
+  skill_name?: string | null;
   passed: boolean;
   score: number;
   threshold: number;
