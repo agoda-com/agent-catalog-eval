@@ -1,5 +1,15 @@
 # agoda-agent-catalog-eval
 
+## 0.7.0
+
+### Minor Changes
+
+- 4113dcd: Add `skill_name` to each telemetry result row so downstream reports can group feedback by the skill under evaluation.
+
+### Patch Changes
+
+- 4113dcd: Treat OpenCode permission evaluation logs as skill invocation evidence so non-OTel runs do not fail solely due to missing OTel plugin logs.
+
 ## 0.6.1
 
 ### Patch Changes
