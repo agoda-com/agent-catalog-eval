@@ -256,11 +256,10 @@ describe("checkOpenCodeSkillSignals", () => {
 
   // Realistic-shape lines lifted from the OpenCode debug log format.
   const registrationLine = (name: string) =>
-    `service=permission permission=skill pattern=${name} ` +
+    `service=permission permission=skill pattern=${name} action=allow evaluated ` +
     `ruleset=[{"permission":"external_directory","pattern":"/builds/.../.opencode/skills/${name}/*","action":"allow"}]`;
 
-  const invocationLine =
-    `service=opencode-plugin-otel sessionID=abc tool_name=skill success=true duration_ms=42`;
+  const invocationLine = `service=opencode-plugin-otel sessionID=abc tool_name=skill success=true duration_ms=42`;
 
   it("marks each requested skill as registered when its permission line is present", () => {
     const stdout = [registrationLine("foo"), registrationLine("bar"), invocationLine].join("\n");
@@ -269,6 +268,12 @@ describe("checkOpenCodeSkillSignals", () => {
       { skill: "foo", registered: true },
       { skill: "bar", registered: true },
     ]);
+    expect(sig.anyInvoked).toBe(true);
+  });
+
+  it("treats a skill permission evaluation as invocation evidence without OTel", () => {
+    const sig = checkOpenCodeSkillSignals({ ...empty, stdout: registrationLine("foo") }, ["foo"]);
+    expect(sig.registrations).toEqual([{ skill: "foo", registered: true }]);
     expect(sig.anyInvoked).toBe(true);
   });
 
@@ -295,10 +300,9 @@ describe("checkOpenCodeSkillSignals", () => {
   });
 
   it("inspects stderr too (OpenCode emits debug logs on both streams)", () => {
-    const sig = checkOpenCodeSkillSignals(
-      { ...empty, stderr: registrationLine("from-stderr") },
-      ["from-stderr"],
-    );
+    const sig = checkOpenCodeSkillSignals({ ...empty, stderr: registrationLine("from-stderr") }, [
+      "from-stderr",
+    ]);
     expect(sig.registrations[0]!.registered).toBe(true);
   });
 
@@ -338,6 +342,7 @@ describe("describeOpenCodeSkillSignalFailure", () => {
       anyInvoked: false,
     });
     expect(msg).toContain("never invoked");
+    expect(msg).toContain("permission=skill");
     expect(msg).toContain("tool_name=skill");
   });
 });

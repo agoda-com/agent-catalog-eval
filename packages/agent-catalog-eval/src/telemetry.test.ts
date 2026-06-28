@@ -28,6 +28,7 @@ const baseConfig = (overrides: Partial<RunnerConfig> = {}): RunnerConfig => ({
 
 const result = (overrides: Partial<TestResult> = {}): TestResult => ({
   name: "case",
+  skillName: "skill.case",
   passed: true,
   score: 80,
   threshold: 70,
@@ -58,6 +59,7 @@ describe("buildPayload", () => {
     expect(payload.results).toEqual([
       {
         test_name: "a",
+        skill_name: "skill.case",
         passed: true,
         score: 90,
         threshold: 70,
@@ -67,6 +69,7 @@ describe("buildPayload", () => {
       },
       {
         test_name: "b",
+        skill_name: "skill.case",
         passed: false,
         score: 50,
         threshold: 70,
@@ -76,6 +79,7 @@ describe("buildPayload", () => {
       },
       {
         test_name: "c",
+        skill_name: "skill.case",
         passed: true,
         score: 80,
         threshold: 70,
@@ -84,6 +88,15 @@ describe("buildPayload", () => {
         error: null,
       },
     ]);
+  });
+
+  it("uses null skill_name when the result does not carry a skill name", () => {
+    const payload = buildPayload([result({ skillName: undefined })], baseConfig());
+
+    expect(payload.results[0]).toMatchObject({
+      test_name: "case",
+      skill_name: null,
+    });
   });
 
   it("uses the provided CI context for project/pipeline/commit/branch", () => {

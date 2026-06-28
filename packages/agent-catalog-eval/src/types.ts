@@ -43,23 +43,25 @@ export interface SkillRegistrationCheck {
 /**
  * Hard-evidence check that OpenCode actually loaded and used a skill,
  * derived from grepping the per-test stdout/stderr (which is also dumped
- * to `.agent-trace/stdout.txt`). When either signal is missing the test
- * fails regardless of the judge score — a skill that was never registered
- * or never invoked can't have caused the agent's output.
+ * to `.agent-trace/stdout.txt`). When the signal is missing the test fails
+ * regardless of the judge score — a skill that was never seen or invoked
+ * can't have caused the agent's output.
  */
 export interface OpenCodeSkillSignals {
   /** One entry per skill we placed. `registered` is true when the OpenCode
-   * permission engine pre-evaluated a `permission=skill pattern=<name>` rule
-   * for it at startup, i.e. auto-discovery picked it up. */
+   * permission engine evaluated a `permission=skill pattern=<name>` rule
+   * for it, which is the plain-log evidence that the skill tool was used. */
   registrations: SkillRegistrationCheck[];
-  /** True when at least one `tool_name=skill` event appears in the log,
-   * i.e. the agent invoked a skill via the skill tool (rather than just
-   * `read`-ing the SKILL.md file). */
+  /** True when at least one skill-tool invocation signal appears in the log:
+   * either OpenCode's permission evaluation or an OTel `tool_name=skill`
+   * event. */
   anyInvoked: boolean;
 }
 
 export interface TestResult {
   name: string;
+  /** Primary skill under evaluation for this test, when known. */
+  skillName?: string;
   passed: boolean;
   score: number;
   threshold: number;
@@ -131,6 +133,11 @@ export interface RunnerConfig {
 
 export interface TelemetryTestResult {
   test_name: string;
+  /**
+   * Primary skill under evaluation for this result. Optional to keep the
+   * exported payload type additive for consumers constructing it themselves.
+   */
+  skill_name?: string | null;
   passed: boolean;
   score: number;
   threshold: number;
