@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -236,11 +237,15 @@ describe("placeSkill", () => {
       const source = join(tmp, "source");
       await mkdir(source);
       await writeFile(join(source, "large.bin"), Buffer.alloc(1024 * 1024 + 1));
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const installed = join(tmp, skillsDirForAgent(agent), "large");
+      let fileExistsAtWarning: boolean | undefined;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {
+        fileExistsAtWarning = existsSync(join(installed, "large.bin"));
+      });
 
       await placeSkill(tmp, agent, "large", "", source);
 
-      const installed = join(tmp, skillsDirForAgent(agent), "large");
+      expect(fileExistsAtWarning).toBe(false);
       expect((await stat(join(installed, "large.bin"))).size).toBe(1048577);
       expect(warn).toHaveBeenCalledOnce();
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1048577 bytes/));
@@ -259,6 +264,7 @@ describe("runAgent skill installation", () => {
       await writeFile(join(primary, "references", "primary.md"), "primary reference");
       await writeFile(join(extra, "extra.md"), "extra reference");
       await writeFile(join(extra, "line\nbreak.md"), "line break");
+      await writeFile(join(extra, "danger\u001b[31m.md"), "escape");
       const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
       const result = await runAgent({
@@ -289,7 +295,7 @@ describe("runAgent skill installation", () => {
       expect(log).toHaveBeenCalledOnce();
       expect(log).toHaveBeenCalledWith(
         expect.stringMatching(
-          /Installed skill files: primary \(SKILL.md, references\/primary.md\); extra \(SKILL.md, extra.md, line\\nbreak.md\); markdown-only \(SKILL.md\)/,
+          /Installed skill files: primary \(SKILL.md, references\/primary.md\); extra \(SKILL.md, danger\\u\{1b\}\[31m.md, extra.md, line\\nbreak.md\); markdown-only \(SKILL.md\)/,
         ),
       );
     },

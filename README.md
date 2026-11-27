@@ -177,9 +177,12 @@ Each case prints the files installed for each skill.
 
 The copy skips hidden entries, `node_modules`, and symlinks. It also skips the cases
 directory, the current case directory, and the output directory (by default,
-`<cases-dir>/output`) when any of them are nested inside the skill folder.
-Symlinks and installed skills over 1 MB produce warnings. Keep eval cases outside
-skill folders so the files packaged with the skill are easy to identify.
+`<cases-dir>/output`) when any of them are nested inside the skill folder. If the
+skill folder is itself one of those eval directories, only its supplied `SKILL.md`
+is installed.
+The installer warns about skipped symlinks and warns before copying a skill over
+1 MB. Keep eval cases outside skill folders so the files packaged with the skill
+are easy to identify.
 
 ## Options: Knobs and Dials 🎛️
 

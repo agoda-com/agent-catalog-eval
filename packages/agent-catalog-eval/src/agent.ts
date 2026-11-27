@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { cp, lstat, mkdir, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import chalk from "chalk";
 import type { AgentResult, AgentType, OtelConfig } from "./types.js";
+import { scanSkillFolder } from "./files.js";
 import { injectTraceContext } from "./tracing.js";
 
 export const OTEL_PLUGIN_NAME = "@devtheops/opencode-plugin-otel";
@@ -105,39 +106,39 @@ async function installSkill(
       await mkdir(destination, { recursive: true });
     }
     await rejectDestinationSymlink(skillFile);
-    let bytes = Buffer.byteLength(skillContent);
-
-    async function copyContents(source: string, destination: string, prefix: string) {
-      for (const entry of await readdir(source, { withFileTypes: true })) {
-        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-        if (entry.isSymbolicLink()) {
-          console.warn(chalk.yellow(`  Skipping symlink in skill "${skillName}": ${path}`));
-          continue;
-        }
-        // The caller's content supplies the root SKILL.md.
-        if (entry.name.startsWith(".") || entry.name === "node_modules" || path === "SKILL.md") {
-          continue;
-        }
-
-        const from = join(source, entry.name);
-        const to = join(destination, entry.name);
-        if (entry.isDirectory()) {
-          if (from === workRoot || excludedDirs?.has(from)) continue;
-          await rejectDestinationSymlink(to);
-          await mkdir(to, { recursive: true });
-          await copyContents(from, to, path);
-        } else if (entry.isFile()) {
-          await rejectDestinationSymlink(to);
-          await cp(from, to);
-          bytes += (await stat(to)).size;
-          files.push(path);
-        }
-      }
+    const blockedDirs = new Set(excludedDirs);
+    if (workRoot !== sourceRoot) blockedDirs.add(workRoot);
+    const scan = await scanSkillFolder(sourceRoot, blockedDirs);
+    for (const path of scan.symlinks) {
+      console.warn(
+        chalk.yellow(
+          '  Skipping symlink in skill "' + escapeLogText(skillName) + '": ' + escapeLogText(path),
+        ),
+      );
     }
 
-    await copyContents(sourceRoot, destination, "");
+    const bytes = Buffer.byteLength(skillContent) + scan.bytes;
     if (bytes > 1024 * 1024) {
-      console.warn(chalk.yellow(`  Skill "${skillName}" exceeds 1 MB (${bytes} bytes installed)`));
+      console.warn(
+        chalk.yellow(
+          '  Skill "' +
+            escapeLogText(skillName) +
+            '" exceeds 1 MB (' +
+            bytes +
+            " bytes to install)",
+        ),
+      );
+    }
+
+    for (const { path, directory } of scan.entries) {
+      const to = join(destination, path);
+      await rejectDestinationSymlink(to);
+      if (directory) {
+        await mkdir(to, { recursive: true });
+      } else {
+        await cp(join(sourceRoot, path), to);
+        files.push(path);
+      }
     }
   }
 
@@ -145,12 +146,20 @@ async function installSkill(
   return files.sort();
 }
 
+function escapeLogText(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (char) => {
+    if (char === "\n") return "\\n";
+    if (char === "\r") return "\\r";
+    return "\\u{" + char.codePointAt(0)!.toString(16) + "}";
+  });
+}
+
 async function rejectDestinationSymlink(path: string): Promise<void> {
   const existing = await lstat(path).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
   if (existing?.isSymbolicLink()) {
-    throw new Error("Cannot install a skill through a destination symlink: " + path);
+    throw new Error("Cannot install a skill through a destination symlink: " + escapeLogText(path));
   }
 }
 
@@ -370,10 +379,7 @@ export async function runAgent(config: AgentRunConfig): Promise<AgentResult> {
     installedSkills.push(`${name} (${files.join(", ")})`);
   }
   if (installsFolders) {
-    const files = installedSkills
-      .join("; ")
-      .replace(/[\r\n]/g, (char) => (char === "\r" ? "\\r" : "\\n"));
-    console.log(chalk.dim("  Installed skill files: " + files));
+    console.log(chalk.dim("  Installed skill files: " + escapeLogText(installedSkills.join("; "))));
   }
 
   switch (agent) {

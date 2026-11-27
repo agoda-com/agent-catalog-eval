@@ -127,3 +127,36 @@ export async function copyDir(src: string, dest: string): Promise<void> {
 export async function removeDir(dir: string): Promise<void> {
   await rm(dir, { recursive: true, force: true });
 }
+
+/** Gather the installable entries and their size before writing the skill. */
+export async function scanSkillFolder(root: string, excludedDirs: ReadonlySet<string>) {
+  const entries: Array<{ path: string; directory: boolean }> = [];
+  const symlinks: string[] = [];
+  let bytes = 0;
+
+  async function walk(dir: string, prefix: string) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = prefix ? prefix + "/" + entry.name : entry.name;
+      if (entry.isSymbolicLink()) {
+        symlinks.push(path);
+        continue;
+      }
+      // The runner supplies the root SKILL.md separately.
+      if (entry.name.startsWith(".") || entry.name === "node_modules" || path === "SKILL.md") {
+        continue;
+      }
+
+      const source = join(dir, entry.name);
+      if (entry.isDirectory() && !excludedDirs.has(source)) {
+        entries.push({ path, directory: true });
+        await walk(source, path);
+      } else if (entry.isFile()) {
+        entries.push({ path, directory: false });
+        bytes += (await stat(source)).size;
+      }
+    }
+  }
+
+  if (!excludedDirs.has(root)) await walk(root, "");
+  return { entries, symlinks, bytes };
+}

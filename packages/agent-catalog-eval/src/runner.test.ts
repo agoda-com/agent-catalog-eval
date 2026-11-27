@@ -565,6 +565,33 @@ describe("runAll (--dry-run filters)", () => {
 });
 
 describe("runAll skill installation", () => {
+  it("installs only SKILL.md when the skill folder is the cases root", async () => {
+    const casesDir = join(tmp, "cases");
+    const outputDir = join(casesDir, "output");
+    for (const name of ["selected", "sibling"]) {
+      await writeCase("cases/" + name, {
+        skillPath: "cases/SKILL.md",
+        threshold: 70,
+        rubric: "r",
+        prompt: "p",
+      });
+      await mkdir(join(casesDir, name, "before"));
+      await mkdir(join(casesDir, name, "after"));
+      await writeFile(join(casesDir, name, "after", "answer.md"), name + " answer");
+    }
+    await writeFile(join(casesDir, "SKILL.md"), "# shared skill");
+    vi.mocked(evaluate).mockResolvedValueOnce({ score: 40, reasoning: "keep the workdir" });
+
+    const results = await runAll(
+      configFor({ dryRun: false, agent: "cursor", casesDir, outputDir, filter: "selected" }),
+    );
+
+    expect(results).toMatchObject([{ name: "selected", score: 40 }]);
+    const installed = join(outputDir, "selected", ".cursor", "skills", "cases");
+    expect(await readdir(installed)).toEqual(["SKILL.md"]);
+    expect(await readFile(join(installed, "SKILL.md"), "utf-8")).toBe("# shared skill");
+  });
+
   it.each(["default", "custom"] as const)(
     "installs both skill folders and excludes nested eval directories with %s output",
     async (outputMode) => {
