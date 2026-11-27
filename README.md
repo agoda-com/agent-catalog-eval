@@ -169,6 +169,17 @@ judge_rubric: |
   ...
 ```
 
+For Cursor, OpenCode, and Claude Code, skill installs now copy the whole folder containing
+`SKILL.md` by default, including sibling files such as `references/`. This applies to
+`skill_path` and to every extra `SKILL.md` path in the optional `additional_skills` list.
+Relative paths are preserved. Each case prints the files installed for each skill.
+
+The copy skips hidden entries, `node_modules`, and symlinks. It also skips the cases
+directory, the current case directory, and the output directory (by default,
+`<cases-dir>/output`) when any of them are nested inside the skill folder.
+Symlinks and installed skills over 1 MB produce warnings. Keep eval cases outside
+skill folders so the files packaged with the skill are easy to identify.
+
 ## Options: Knobs and Dials 🎛️
 
 Because we know you love to customize:

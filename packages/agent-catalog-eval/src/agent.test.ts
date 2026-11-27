@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   buildOtelEnv,
   OTEL_PLUGIN_NAME,
@@ -12,6 +13,14 @@ import {
 import type { OtelRunContext } from "./agent.js";
 import type { AgentType } from "./types.js";
 
+vi.mock("node:child_process", () => ({
+  spawn: () => {
+    const proc = new EventEmitter();
+    queueMicrotask(() => proc.emit("close", 0));
+    return proc;
+  },
+}));
+
 let tmp: string;
 
 beforeEach(async () => {
@@ -19,6 +28,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(tmp, { recursive: true, force: true });
 });
 
@@ -142,6 +152,127 @@ describe("placeSkill", () => {
       expect(content).toBe("# primary skill");
     },
   );
+
+  it.each(["cursor", "opencode", "claude-code"] as const)(
+    "copies the skill folder into %s and skips unwanted entries",
+    async (agent) => {
+      const source = join(tmp, "source");
+      await mkdir(join(source, "references", "nested"), { recursive: true });
+      await mkdir(join(source, "references", "node_modules"));
+      await mkdir(join(source, ".hidden-dir"));
+      await writeFile(join(source, "SKILL.md"), "# disk version");
+      await writeFile(join(source, "references", "nested", "details.md"), "details");
+      await writeFile(join(source, "references", ".hidden"), "hidden");
+      await writeFile(join(source, ".hidden-dir", "hidden.md"), "hidden");
+      await writeFile(join(source, "references", "node_modules", "dependency.js"), "dependency");
+      await symlink("nested/details.md", join(source, "references", "linked.md"));
+      await symlink("references", join(source, "linked-dir"), "dir");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await placeSkill(tmp, agent, "example", "# supplied version", source);
+
+      const installed = join(tmp, skillsDirForAgent(agent), "example");
+      expect((await readdir(installed)).sort()).toEqual(["SKILL.md", "references"]);
+      expect(await readdir(join(installed, "references"))).toEqual(["nested"]);
+      expect(await readFile(join(installed, "references", "nested", "details.md"), "utf-8")).toBe(
+        "details",
+      );
+      expect(await readFile(join(installed, "SKILL.md"), "utf-8")).toBe("# supplied version");
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/symlink.*references.*linked\.md/i));
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/symlink.*linked-dir/i));
+    },
+  );
+
+  it.each([".cursor", ".cursor/skills/example/references", ".cursor/skills/example/SKILL.md"])(
+    "rejects a pre-existing destination symlink at %s",
+    async (path) => {
+      const source = join(tmp, "source");
+      const work = join(tmp, "work");
+      const outside = join(tmp, "outside");
+      const destination = join(work, path);
+      await mkdir(join(source, "references"), { recursive: true });
+      await mkdir(dirname(destination), { recursive: true });
+      await mkdir(outside);
+      await writeFile(join(source, "references", "details.md"), "details");
+      await writeFile(join(outside, "unrelated.md"), "unrelated");
+      if (path.endsWith("SKILL.md")) {
+        await symlink(join(outside, "unrelated.md"), destination);
+      } else {
+        await symlink(outside, destination, "dir");
+      }
+
+      await expect(placeSkill(work, "cursor", "example", "skill", source)).rejects.toThrow(
+        "symlink",
+      );
+      expect(await readdir(outside)).toEqual(["unrelated.md"]);
+      expect(await readFile(join(outside, "unrelated.md"), "utf-8")).toBe("unrelated");
+    },
+  );
+
+  it.each(["cursor", "opencode", "claude-code"] as const)(
+    "warns about a skill folder over 1 MB for %s and still copies it",
+    async (agent) => {
+      const source = join(tmp, "source");
+      await mkdir(source);
+      await writeFile(join(source, "large.bin"), Buffer.alloc(1024 * 1024 + 1));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await placeSkill(tmp, agent, "large", "", source);
+
+      const installed = join(tmp, skillsDirForAgent(agent), "large");
+      expect((await stat(join(installed, "large.bin"))).size).toBe(1048577);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1048577 bytes/));
+    },
+  );
+});
+
+describe("runAgent skill installation", () => {
+  it.each(["cursor", "opencode", "claude-code"] as const)(
+    "installs and logs the primary and additional skill folders for %s",
+    async (agent) => {
+      const primary = join(tmp, "primary-source");
+      const extra = join(tmp, "extra-source");
+      await mkdir(join(primary, "references"), { recursive: true });
+      await mkdir(extra);
+      await writeFile(join(primary, "references", "primary.md"), "primary reference");
+      await writeFile(join(extra, "extra.md"), "extra reference");
+      await writeFile(join(extra, "line\nbreak.md"), "line break");
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      const result = await runAgent({
+        workDir: tmp,
+        prompt: "noop",
+        skillContent: "# primary",
+        skillName: "primary",
+        skillDir: primary,
+        additionalSkills: [
+          { name: "extra", content: "# extra", dir: extra },
+          { name: "markdown-only", content: "# markdown only" },
+        ],
+        agent,
+        model: "model",
+        apiKey: "key",
+        baseUrl: "https://api.example/v1",
+        timeoutMs: 1000,
+        headers: {},
+      });
+
+      expect(result.exitCode).toBe(0);
+      const installed = join(tmp, skillsDirForAgent(agent));
+      expect(await readFile(join(installed, "primary", "references", "primary.md"), "utf-8")).toBe(
+        "primary reference",
+      );
+      expect(await readFile(join(installed, "extra", "extra.md"), "utf-8")).toBe("extra reference");
+      expect(await readdir(join(installed, "markdown-only"))).toEqual(["SKILL.md"]);
+      expect(log).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /Installed skill files: primary \(SKILL.md, references\/primary.md\); extra \(SKILL.md, extra.md, line\\nbreak.md\); markdown-only \(SKILL.md\)/,
+        ),
+      );
+    },
+  );
 });
 
 describe("runAgent → opencode.json", () => {
@@ -150,11 +281,6 @@ describe("runAgent → opencode.json", () => {
     return JSON.parse(raw) as Record<string, unknown>;
   }
 
-  /**
-   * Drive runAgent far enough that it writes opencode.json and tries to spawn
-   * `opencode`. We don't need opencode to be installed: spawning a missing
-   * binary rejects with ENOENT, and by then the config file is already on disk.
-   */
   async function writeConfigViaRunAgent(opts: {
     otel?: OtelRunContext;
   }): Promise<Record<string, unknown>> {
@@ -170,8 +296,6 @@ describe("runAgent → opencode.json", () => {
       timeoutMs: 1000,
       headers: {},
       otel: opts.otel,
-    }).catch(() => {
-      // expected: `opencode` binary not present in the test environment
     });
     return readOpencodeJson(tmp);
   }

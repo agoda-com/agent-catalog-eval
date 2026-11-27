@@ -203,7 +203,8 @@ async function runTestBody(
 ): Promise<TestResult> {
   const start = Date.now();
   const label = testCase.name.replace(/\//g, "-");
-  const skillName = basename(dirname(testCase.skillPath));
+  const skillDir = dirname(testCase.skillPath);
+  const skillName = basename(skillDir);
   const workDir = await createWorkDir(config.outputDir, label);
 
   try {
@@ -215,6 +216,7 @@ async function runTestBody(
       testCase.additionalSkillPaths.map(async (p) => ({
         name: basename(dirname(p)),
         content: await readFile(p, "utf-8"),
+        dir: dirname(p),
       })),
     );
 
@@ -223,6 +225,8 @@ async function runTestBody(
       prompt: testCase.prompt,
       skillContent,
       skillName,
+      skillDir,
+      skillCopyExcludeDirs: [config.casesDir, testCase.dir, config.outputDir],
       additionalSkills,
       agent: config.agent,
       model: config.workerModel,
