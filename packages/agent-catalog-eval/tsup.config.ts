@@ -11,8 +11,13 @@ export default defineConfig({
   clean: true,
   dts: true,
   shims: true,
-  // chalk v5 / yaml are ESM-only; bundling them lets the CJS bin actually run.
+  // Keep chalk and YAML bundled so the CommonJS CLI can load them.
   noExternal: ["chalk", "yaml"],
+  // Bundled YAML uses CommonJS requires for Node built-ins, even in the ESM output.
   banner: (ctx) =>
-    ctx.format === "cjs" ? { js: "#!/usr/bin/env node" } : { js: "" },
+    ctx.format === "cjs"
+      ? { js: "#!/usr/bin/env node" }
+      : {
+          js: 'import { createRequire as createBundleRequire } from "node:module"; const require = createBundleRequire(import.meta.url);',
+        },
 });

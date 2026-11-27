@@ -22,7 +22,7 @@
     "!**/*.tsbuildinfo"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node --input-type=module -e \"import './dist/index.js'\"",
     "dev": "tsup --watch",
     "test": "vitest run",
     "check-types": "tsc --noEmit"

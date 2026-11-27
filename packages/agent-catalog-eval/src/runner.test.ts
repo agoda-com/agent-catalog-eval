@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,7 +13,18 @@ import {
   printSummary,
   runAll,
 } from "./runner.js";
+import { evaluate } from "./judge.js";
 import type { RunnerConfig, TestCase } from "./types.js";
+
+vi.mock("node:child_process", () => ({
+  spawn: () => {
+    const proc = new EventEmitter();
+    queueMicrotask(() => proc.emit("close", 0));
+    return proc;
+  },
+}));
+
+vi.mock("./judge.js", () => ({ evaluate: vi.fn(), diagnoseFailures: vi.fn() }));
 
 let tmp: string;
 
@@ -468,6 +480,26 @@ describe("printResult / printSummary", () => {
   });
 });
 
+function configFor(extra: Partial<RunnerConfig>): RunnerConfig {
+  return {
+    casesDir: tmp,
+    repoRoot: tmp,
+    outputDir: join(tmp, "output"),
+    agent: "opencode",
+    workerModel: "x",
+    judgeModel: "y",
+    apiKey: "",
+    baseUrl: "https://example/v1",
+    dryRun: true,
+    timeoutMs: 1000,
+    collectMetrics: false,
+    metricsUrl: "https://example/metrics",
+    headers: {},
+    ciContext: { project: "p", pipeline_id: "1", commit_sha: "c", branch: "b" },
+    ...extra,
+  };
+}
+
 describe("runAll (--dry-run filters)", () => {
   let logs: string[];
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -513,26 +545,6 @@ describe("runAll (--dry-run filters)", () => {
     });
   }
 
-  function configFor(extra: Partial<RunnerConfig>): RunnerConfig {
-    return {
-      casesDir: tmp,
-      repoRoot: tmp,
-      outputDir: join(tmp, "output"),
-      agent: "opencode",
-      workerModel: "x",
-      judgeModel: "y",
-      apiKey: "",
-      baseUrl: "https://example/v1",
-      dryRun: true,
-      timeoutMs: 1000,
-      collectMetrics: false,
-      metricsUrl: "https://example/metrics",
-      headers: {},
-      ciContext: { project: "p", pipeline_id: "1", commit_sha: "c", branch: "b" },
-      ...extra,
-    };
-  }
-
   it("--category keeps only matching tests", async () => {
     await seedTwoCategories();
     const results = await runAll(configFor({ category: "office" }));
@@ -550,4 +562,103 @@ describe("runAll (--dry-run filters)", () => {
     const results = await runAll(configFor({ category: "office", filter: "a" }));
     expect(results.map((r) => r.name)).toEqual(["office/a"]);
   });
+});
+
+describe("runAll skill installation", () => {
+  it("installs only SKILL.md when the skill folder is the cases root", async () => {
+    const casesDir = join(tmp, "cases");
+    const outputDir = join(casesDir, "output");
+    for (const name of ["selected", "sibling"]) {
+      await writeCase("cases/" + name, {
+        skillPath: "cases/SKILL.md",
+        threshold: 70,
+        rubric: "r",
+        prompt: "p",
+      });
+      await mkdir(join(casesDir, name, "before"));
+      await mkdir(join(casesDir, name, "after"));
+      await writeFile(join(casesDir, name, "after", "answer.md"), name + " answer");
+    }
+    await writeFile(join(casesDir, "SKILL.md"), "# shared skill");
+    vi.mocked(evaluate).mockResolvedValueOnce({ score: 40, reasoning: "keep the workdir" });
+
+    const results = await runAll(
+      configFor({ dryRun: false, agent: "cursor", casesDir, outputDir, filter: "selected" }),
+    );
+
+    expect(results).toMatchObject([{ name: "selected", score: 40 }]);
+    const installed = join(outputDir, "selected", ".cursor", "skills", "cases");
+    expect(await readdir(installed)).toEqual(["SKILL.md"]);
+    expect(await readFile(join(installed, "SKILL.md"), "utf-8")).toBe("# shared skill");
+  });
+
+  it.each(["default", "custom"] as const)(
+    "installs both skill folders and excludes nested eval directories with %s output",
+    async (outputMode) => {
+      const primary = join(tmp, "primary");
+      const casesDir = join(primary, "cases");
+      const extra = join(casesDir, "extra");
+      const caseDir = join(extra, "example");
+      const installedOutput =
+        outputMode === "default" ? join(casesDir, "output") : join(primary, "artifacts", "results");
+      let outputDir = installedOutput;
+      if (outputMode === "custom") {
+        await mkdir(join(primary, "artifacts"), { recursive: true });
+        await symlink(join(primary, "artifacts"), join(tmp, "artifact-link"), "dir");
+        outputDir = join(tmp, "artifact-link", "results");
+        await mkdir(join(primary, "artifacts", "results-guide"));
+        await writeFile(join(primary, "artifacts", "results-guide", "guide.md"), "keep me");
+      }
+      await writeCase("primary/cases/extra/example", {
+        skillPath: "primary/SKILL.md",
+        additionalSkills: ["primary/cases/extra/SKILL.md"],
+        threshold: 70,
+        rubric: "r",
+        prompt: "p",
+      });
+      await mkdir(join(caseDir, "before"));
+      await mkdir(join(caseDir, "after"));
+      await writeFile(join(caseDir, "after", "answer.md"), "answer");
+      await mkdir(join(primary, "references"));
+      await writeFile(join(primary, "SKILL.md"), "# primary");
+      await writeFile(join(primary, "references", "details.md"), "details");
+      await writeFile(join(extra, "SKILL.md"), "# extra");
+      await writeFile(join(extra, "reference.md"), "extra reference");
+      await mkdir(installedOutput, { recursive: true });
+      await writeFile(join(installedOutput, "old-output.txt"), "generated");
+      vi.mocked(evaluate).mockResolvedValueOnce({ score: 40, reasoning: "keep the workdir" });
+
+      const results = await runAll(
+        configFor({
+          dryRun: false,
+          agent: "cursor",
+          casesDir,
+          outputDir,
+        }),
+      );
+
+      expect(results).toMatchObject([{ score: 40, passed: false }]);
+      const installed = join(installedOutput, "extra-example", ".cursor", "skills");
+      expect(await readFile(join(installed, "primary", "references", "details.md"), "utf-8")).toBe(
+        "details",
+      );
+      expect(await readFile(join(installed, "extra", "reference.md"), "utf-8")).toBe(
+        "extra reference",
+      );
+      expect((await readdir(join(installed, "extra"))).sort()).toEqual([
+        "SKILL.md",
+        "reference.md",
+      ]);
+      expect(await readdir(join(installed, "primary"))).not.toContain("cases");
+      if (outputMode === "custom") {
+        expect(await readdir(join(installed, "primary", "artifacts"))).toEqual(["results-guide"]);
+      }
+      expect(evaluate).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          agentFiles: [],
+          desiredFiles: [{ path: "answer.md", content: "answer" }],
+        }),
+      );
+    },
+  );
 });

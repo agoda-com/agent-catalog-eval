@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
-import { writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, lstat, mkdir, realpath, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
+import chalk from "chalk";
 import type { AgentResult, AgentType, OtelConfig } from "./types.js";
+import { scanSkillFolder } from "./files.js";
 import { injectTraceContext } from "./tracing.js";
 
 export const OTEL_PLUGIN_NAME = "@devtheops/opencode-plugin-otel";
@@ -20,8 +22,12 @@ export interface AgentRunConfig {
   prompt: string;
   skillContent: string;
   skillName: string;
+  /** Folder containing the primary skill's supporting files. */
+  skillDir?: string;
+  /** Existing eval directories to exclude when they are inside a skill folder. */
+  skillCopyExcludeDirs?: readonly string[];
   /** Extra skills to install alongside the primary one. */
-  additionalSkills?: Array<{ name: string; content: string }>;
+  additionalSkills?: Array<{ name: string; content: string; dir?: string }>;
   agent: AgentType;
   model: string;
   apiKey: string;
@@ -66,10 +72,95 @@ export async function placeSkill(
   agent: AgentType,
   skillName: string,
   skillContent: string,
-) {
+  sourceDir?: string,
+): Promise<void> {
+  await installSkill(workDir, agent, skillName, skillContent, sourceDir);
+}
+
+async function installSkill(
+  workDir: string,
+  agent: AgentType,
+  skillName: string,
+  skillContent: string,
+  sourceDir?: string,
+  excludedDirs?: ReadonlySet<string>,
+): Promise<string[]> {
   const skillDir = join(workDir, skillsDirForAgent(agent), skillName);
-  await mkdir(skillDir, { recursive: true });
-  await writeFile(join(skillDir, "SKILL.md"), skillContent);
+  const skillFile = join(skillDir, "SKILL.md");
+  const files = ["SKILL.md"];
+  if (sourceDir === undefined) {
+    await mkdir(skillDir, { recursive: true });
+  } else {
+    const sourceRoot = await realpath(sourceDir);
+    const destinationPath = relative(workDir, skillDir);
+    if (isAbsolute(destinationPath) || destinationPath.split(sep)[0] === "..") {
+      throw new Error("Skill destination must be inside the work directory");
+    }
+
+    await mkdir(workDir, { recursive: true });
+    const workRoot = await realpath(workDir);
+    let destination = workRoot;
+    for (const part of destinationPath.split(sep)) {
+      destination = join(destination, part);
+      await rejectDestinationSymlink(destination);
+      await mkdir(destination, { recursive: true });
+    }
+    await rejectDestinationSymlink(skillFile);
+    const blockedDirs = new Set(excludedDirs);
+    if (workRoot !== sourceRoot) blockedDirs.add(workRoot);
+    const scan = await scanSkillFolder(sourceRoot, blockedDirs);
+    for (const path of scan.symlinks) {
+      console.warn(
+        chalk.yellow(
+          '  Skipping symlink in skill "' + escapeLogText(skillName) + '": ' + escapeLogText(path),
+        ),
+      );
+    }
+
+    const bytes = Buffer.byteLength(skillContent) + scan.bytes;
+    if (bytes > 1024 * 1024) {
+      console.warn(
+        chalk.yellow(
+          '  Skill "' +
+            escapeLogText(skillName) +
+            '" exceeds 1 MB (' +
+            bytes +
+            " bytes to install)",
+        ),
+      );
+    }
+
+    for (const { path, directory } of scan.entries) {
+      const to = join(destination, path);
+      await rejectDestinationSymlink(to);
+      if (directory) {
+        await mkdir(to, { recursive: true });
+      } else {
+        await cp(join(sourceRoot, path), to);
+        files.push(path);
+      }
+    }
+  }
+
+  await writeFile(skillFile, skillContent);
+  return files.sort();
+}
+
+function escapeLogText(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (char) => {
+    if (char === "\n") return "\\n";
+    if (char === "\r") return "\\r";
+    return "\\u{" + char.codePointAt(0)!.toString(16) + "}";
+  });
+}
+
+async function rejectDestinationSymlink(path: string): Promise<void> {
+  const existing = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+  if (existing?.isSymbolicLink()) {
+    throw new Error("Cannot install a skill through a destination symlink: " + escapeLogText(path));
+  }
 }
 
 /**
@@ -265,6 +356,8 @@ export async function runAgent(config: AgentRunConfig): Promise<AgentResult> {
     prompt,
     skillContent,
     skillName,
+    skillDir,
+    skillCopyExcludeDirs = [],
     additionalSkills = [],
     agent,
     model,
@@ -275,9 +368,18 @@ export async function runAgent(config: AgentRunConfig): Promise<AgentResult> {
     otel,
   } = config;
 
-  await placeSkill(workDir, agent, skillName, skillContent);
-  for (const s of additionalSkills) {
-    await placeSkill(workDir, agent, s.name, s.content);
+  const skills = [{ name: skillName, content: skillContent, dir: skillDir }, ...additionalSkills];
+  const installsFolders = skills.some((skill) => skill.dir !== undefined);
+  const excludedDirs = installsFolders
+    ? new Set(await Promise.all(skillCopyExcludeDirs.map((dir) => realpath(dir))))
+    : undefined;
+  const installedSkills: string[] = [];
+  for (const { name, content, dir } of skills) {
+    const files = await installSkill(workDir, agent, name, content, dir, excludedDirs);
+    installedSkills.push(`${name} (${files.join(", ")})`);
+  }
+  if (installsFolders) {
+    console.log(chalk.dim("  Installed skill files: " + escapeLogText(installedSkills.join("; "))));
   }
 
   switch (agent) {
