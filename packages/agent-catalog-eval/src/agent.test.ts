@@ -159,8 +159,16 @@ describe("placeSkill", () => {
       const source = join(tmp, "source");
       await mkdir(join(source, "references", "nested"), { recursive: true });
       await mkdir(join(source, "references", "node_modules"));
+      await mkdir(join(source, "scripts"));
+      await mkdir(join(source, "assets"));
+      await mkdir(join(source, "templates", "nested"), { recursive: true });
       await mkdir(join(source, ".hidden-dir"));
       await writeFile(join(source, "SKILL.md"), "# disk version");
+      const script = "#!/bin/sh\nprintf 'ok\\n'\n";
+      const asset = Buffer.from([0, 1, 255]);
+      await writeFile(join(source, "scripts", "check.sh"), script, { mode: 0o755 });
+      await writeFile(join(source, "assets", "data.bin"), asset);
+      await writeFile(join(source, "templates", "nested", "example.txt"), "template");
       await writeFile(join(source, "references", "nested", "details.md"), "details");
       await writeFile(join(source, "references", ".hidden"), "hidden");
       await writeFile(join(source, ".hidden-dir", "hidden.md"), "hidden");
@@ -172,7 +180,20 @@ describe("placeSkill", () => {
       await placeSkill(tmp, agent, "example", "# supplied version", source);
 
       const installed = join(tmp, skillsDirForAgent(agent), "example");
-      expect((await readdir(installed)).sort()).toEqual(["SKILL.md", "references"]);
+      expect((await readdir(installed)).sort()).toEqual([
+        "SKILL.md",
+        "assets",
+        "references",
+        "scripts",
+        "templates",
+      ]);
+      const installedScript = join(installed, "scripts", "check.sh");
+      expect(await readFile(installedScript, "utf-8")).toBe(script);
+      expect((await stat(installedScript)).mode & 0o100).toBe(0o100);
+      expect(await readFile(join(installed, "assets", "data.bin"))).toEqual(asset);
+      expect(await readFile(join(installed, "templates", "nested", "example.txt"), "utf-8")).toBe(
+        "template",
+      );
       expect(await readdir(join(installed, "references"))).toEqual(["nested"]);
       expect(await readFile(join(installed, "references", "nested", "details.md"), "utf-8")).toBe(
         "details",
